@@ -35,7 +35,10 @@ This repo ships with example configs/templates. You must provide your own:
 - See `/docs` for setup and Home Assistant entity details (if present)
 - See `/systemd` for service examples (if present)
 
-## Companion AI artifacts
-- ChatGPT GPT: https://chatgpt.com/g/g-68e55ceca6888191bb871536408fa73b-home-assistant-voicebm-voice-biometrics
-- Claude Artifact: https://claude.ai/public/artifacts/ec36c013-77d7-47f6-8956-9c3527f8ca4f
+## Project site
+https://cybericebyte.github.io/VoiceBM/
 
+## Companion AI artifacts
+- ChatGPT GPT: https://chatgpt.com/g/g-68e55ecea6888191bb871536408fa73b-home-assistant-voicebm-voice-biometrics
+- Claude Artifact (embedded): https://cybericebyte.github.io/VoiceBM/claude.html
+- Claude Artifact (source): https://claude.ai/public/artifacts/918fa86a-7b8f-4ac5-a4a7-28c581d29cdd
