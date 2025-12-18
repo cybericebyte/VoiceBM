@@ -39,5 +39,6 @@ This repo ships with example configs/templates. You must provide your own:
 There will be a companion GPT for explanation/troubleshooting:
 - Add link here once published:
 ```text
-[<PUT GPT LINK HERE>
+[<<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/ed02e3a2-229b-4c16-92d4-cad6100e9be4" />
+>
 ](https://chatgpt.com/g/g-68e55ecea6888191bb871536408fa73b-home-assistant-voicebm-voice-biometrics)
