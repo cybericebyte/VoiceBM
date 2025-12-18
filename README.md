@@ -35,10 +35,7 @@ This repo ships with example configs/templates. You must provide your own:
 - See `/docs` for setup and Home Assistant entity details (if present)
 - See `/systemd` for service examples (if present)
 
-## GPT link
-There will be a companion GPT for explanation/troubleshooting:
-- Add link here once published:
-```text
-[<<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/ed02e3a2-229b-4c16-92d4-cad6100e9be4" />
->
-](https://chatgpt.com/g/g-68e55ecea6888191bb871536408fa73b-home-assistant-voicebm-voice-biometrics)
+## Companion AI artifacts
+- ChatGPT GPT: https://chatgpt.com/g/g-68e55ceca6888191bb871536408fa73b-home-assistant-voicebm-voice-biometrics
+- Claude Artifact: https://claude.ai/public/artifacts/ec36c013-77d7-47f6-8956-9c3527f8ca4f
+
