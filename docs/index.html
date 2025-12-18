@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VoiceBM — Voice Biometrics for Home Assistant</title>
+  <meta name="description" content="Local voice biometrics for Home Assistant. Speaker identification and identity signals via MQTT. Intelligence over convenience." />
+
+  <style>
+    :root{
+      --bg:#0a0a0a;
+      --panel:#111214;
+      --panel2:#14161a;
+      --border:rgba(255,255,255,.10);
+      --muted:rgba(255,255,255,.70);
+      --muted2:rgba(255,255,255,.55);
+      --text:#ffffff;
+      --a:#06b6d4;
+      --g1:#7c3aed;
+      --g2:#3b82f6;
+      --ok:#10b981;
+      --shadow:0 16px 60px rgba(0,0,0,.55);
+    }
+
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{
+      font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x:hidden;
+    }
+
+    /* Subtle animated gradient wash */
+    .wash{
+      position:fixed; inset:0;
+      background: linear-gradient(135deg, var(--g1), var(--g2));
+      opacity:.06;
+      z-index:-1;
+      transform-origin:center;
+      animation:wash 14s ease-in-out infinite;
+    }
+    @keyframes wash{
+      0%,100%{transform:scale(1) rotate(0deg)}
+      50%{transform:scale(1.15) rotate(180deg)}
+    }
+
+    a{color:var(--a); text-decoration:none}
+    a:hover{text-decoration:underline}
+
+    .container{max-width:1100px;margin:0 auto;padding:0 18px}
+    .pill{
+      display:inline-flex;align-items:center;gap:10px;
+      padding:8px 14px;border:1px solid var(--border);
+      border-radius:999px;background:rgba(255,255,255,.03);
+      color:var(--muted);font-size:.9rem;
+    }
+
+    header{
+      position:sticky; top:0;
+      backdrop-filter: blur(12px);
+      background: rgba(10,10,10,.75);
+      border-bottom:1px solid rgba(255,255,255,.06);
+      z-index:10;
+    }
+
+    .nav{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:14px 0;
+      gap:14px;
+      flex-wrap:wrap;
+    }
+
+    .brand{
+      display:flex; align-items:center; gap:12px;
+      font-weight:800;
+      letter-spacing:.2px;
+    }
+    .dot{
+      width:14px;height:14px;border-radius:50%;
+      background: linear-gradient(135deg,var(--g1),var(--a));
+      box-shadow: 0 0 22px rgba(124,58,237,.5);
+    }
+
+    .navlinks{
+      display:flex; gap:16px; flex-wrap:wrap;
+      align-items:center;
+      justify-content:flex-end;
+    }
+    .navlinks a{
+      color: var(--muted);
+      font-size: .95rem;
+      padding:6px 8px;
+      border-radius:10px;
+      text-decoration:none;
+    }
+    .navlinks a:hover{
+      color: var(--text);
+      background: rgba(255,255,255,.05);
+      text-decoration:none;
+    }
+
+    .hero{padding:64px 0 40px}
+    .hero h1{
+      font-size: clamp(2.2rem, 4vw, 3.6rem);
+      line-height:1.1;
+      margin:16px 0 14px;
+      background: linear-gradient(135deg,var(--g1),var(--a));
+      -webkit-background-clip:text;
+      -webkit-text-fill-color:transparent;
+      background-clip:text;
+    }
+    .hero p{color:var(--muted);max-width:70ch}
+    .hero .sub{color:var(--muted2);margin-top:10px}
+
+    .cta{
+      display:flex; gap:14px; flex-wrap:wrap;
+      margin-top:26px;
+    }
+    .btn{
+      display:inline-flex; align-items:center; justify-content:center;
+      gap:10px;
+      padding:12px 18px;
+      border-radius:14px;
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.04);
+      color: var(--text);
+      font-weight:700;
+      text-decoration:none;
+      transition: transform .15s ease, box-shadow .15s ease, background .15s ease, border-color .15s ease;
+      min-width: 220px;
+    }
+    .btn:hover{
+      transform: translateY(-2px);
+      box-shadow: var(--shadow);
+      text-decoration:none;
+      border-color: rgba(6,182,212,.55);
+    }
+    .btn.primary{
+      background: linear-gradient(135deg,var(--g1),var(--g2));
+      border-color: transparent;
+    }
+    .btn.primary:hover{
+      border-color: transparent;
+      box-shadow: 0 18px 70px rgba(124,58,237,.35);
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(12,1fr);
+      gap:16px;
+      margin: 26px 0 10px;
+    }
+
+    .card{
+      grid-column: span 12;
+      background: rgba(255,255,255,.03);
+      border:1px solid var(--border);
+      border-radius:18px;
+      padding:18px;
+    }
+
+    .stats .card{display:flex; gap:12px; flex-wrap:wrap; justify-content:space-between}
+    .stat{
+      min-width: 220px;
+      padding:14px 14px;
+      border-radius:16px;
+      background: rgba(0,0,0,.20);
+      border:1px solid rgba(255,255,255,.06);
+    }
+    .stat .n{
+      font-size:1.6rem;
+      font-weight:900;
+      background: linear-gradient(135deg,var(--a),var(--ok));
+      -webkit-background-clip:text;
+      -webkit-text-fill-color:transparent;
+      background-clip:text;
+    }
+    .stat .l{color:var(--muted2);font-size:.95rem;margin-top:4px}
+
+    section{padding:46px 0}
+    section h2{
+      font-size: 2rem;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg,var(--g1),var(--a));
+      -webkit-background-clip:text;
+      -webkit-text-fill-color:transparent;
+      background-clip:text;
+    }
+    section .lead{color:var(--muted);max-width:80ch}
+
+    .feature{
+      grid-column: span 6;
+      padding:18px;
+      border-radius:18px;
+      background: rgba(255,255,255,.03);
+      border:1px solid var(--border);
+      transition: transform .15s ease, border-color .15s ease;
+    }
+    .feature:hover{transform: translateY(-2px); border-color: rgba(6,182,212,.45)}
+    .feature .t{font-weight:800;color:var(--text);margin-bottom:6px}
+    .feature .d{color:var(--muted2)}
+
+    .shot{
+      grid-column: span 4;
+      border-radius:18px;
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.03);
+      overflow:hidden;
+    }
+    .shot .ph{
+      height:160px;
+      display:flex;align-items:center;justify-content:center;
+      color: rgba(255,255,255,.80);
+      background: linear-gradient(135deg, rgba(124,58,237,.35), rgba(6,182,212,.20));
+      font-weight:800;
+      letter-spacing:.3px;
+    }
+    .shot .pad{padding:14px}
+    .shot .t{font-weight:800;margin-bottom:6px}
+    .shot .d{color:var(--muted2);font-size:.95rem}
+
+    .steps .step{
+      margin-top:14px;
+      padding:18px;
+      border-radius:18px;
+      background: rgba(255,255,255,.03);
+      border:1px solid var(--border);
+    }
+    .steps .k{display:flex;gap:10px;align-items:center;margin-bottom:8px}
+    .badge{
+      width:28px;height:28px;border-radius:50%;
+      display:inline-flex;align-items:center;justify-content:center;
+      background: linear-gradient(135deg,var(--g1),var(--g2));
+      font-weight:900;
+    }
+    .code{
+      margin-top:10px;
+      padding:12px;
+      border-radius:14px;
+      background: rgba(0,0,0,.35);
+      border:1px solid rgba(255,255,255,.08);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: rgba(16,185,129,.95);
+      overflow:auto;
+      font-size:.92rem;
+    }
+
+    .download .panel{
+      margin-top:18px;
+      padding:22px;
+      border-radius:20px;
+      background: rgba(255,255,255,.04);
+      border:1px solid var(--border);
+      text-align:center;
+    }
+    .small{color:var(--muted2);font-size:.95rem;margin-top:10px}
+
+    footer{
+      padding:34px 0 50px;
+      border-top:1px solid rgba(255,255,255,.06);
+      color:var(--muted2);
+    }
+    .footlinks{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px}
+    .footlinks a{color:var(--muted);text-decoration:none}
+    .footlinks a:hover{color:var(--text);text-decoration:none}
+
+    @media (max-width:900px){
+      .feature{grid-column: span 12}
+      .shot{grid-column: span 12}
+      .btn{min-width: 100%}
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wash"></div>
+
+  <header>
+    <div class="container">
+      <div class="nav">
+        <div class="brand">
+          <span class="dot" aria-hidden="true"></span>
+          <span>VoiceBM</span>
+          <span class="pill">Local voice biometrics • Home Assistant</span>
+        </div>
+
+        <nav class="navlinks" aria-label="Primary navigation">
+          <a href="#features">Features</a>
+          <a href="#screenshots">Screenshots</a>
+          <a href="#quickstart">Quick Start</a>
+          <a href="#download">Download</a>
+          <a href="claude.html">Claude Artifact</a>
+          <a href="https://chatgpt.com/g/g-68e55ecea6888191bb871536408fa73b-home-assistant-voicebm-voice-biometrics" target="_blank" rel="noopener">GPT Assistant</a>
+          <a href="https://github.com/cybericebyte/VoiceBM" target="_blank" rel="noopener">GitHub</a>
+        </nav>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <section class="hero">
+        <div class="pill">Intelligence over convenience.</div>
+        <h1>Voice Biometrics that stays in your house.</h1>
+        <p>
+          VoiceBM identifies who is speaking and publishes identity signals via MQTT for Home Assistant workflows.
+          No cloud dependency required. Built like an engine, not a toy.
+        </p>
+        <p class="sub">
+          Room context is for collection and routing. Identity is global. Those two worlds don’t mix.
+        </p>
+
+        <div class="cta">
+          <a class="btn primary" href="https://github.com/cybericebyte/VoiceBM/releases/latest" target="_blank" rel="noopener">View Latest Release</a>
+          <a class="btn" href="https://github.com/cybericebyte/VoiceBM" target="_blank" rel="noopener">View Repository</a>
+          <a class="btn" href="claude.html">Open Claude Artifact</a>
+        </div>
+
+        <div class="grid stats">
+          <div class="card">
+            <div class="stat">
+              <div class="n">Local</div>
+              <div class="l">Voice data stays on your network</div>
+            </div>
+            <div class="stat">
+              <div class="n">MQTT</div>
+              <div class="l">Publish identity + controls cleanly</div>
+            </div>
+            <div class="stat">
+              <div class="n">Multi-Room</div>
+              <div class="l">Passive nodes per collection point</div>
+            </div>
+            <div class="stat">
+              <div class="n">Blocklists</div>
+              <div class="l">Per-identity controls including unknown user</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="features">
+        <h2>Features</h2>
+        <p class="lead">Practical features for real homes — fast ID, clean controls, and automation-friendly outputs.</p>
+
+        <div class="grid">
+          <div class="feature">
+            <div class="t">Speaker identification engine</div>
+            <div class="d">Create embeddings, match to gallery, fall back to a virtual <strong>user</strong> identity for unknown speakers.</div>
+          </div>
+
+          <div class="feature">
+            <div class="t">Home Assistant friendly</div>
+            <div class="d">MQTT-first architecture so identities, sensors, and controls can show up as native entities.</div>
+          </div>
+
+          <div class="feature">
+            <div class="t">Blocklist contract</div>
+            <div class="d">Per-identity block switches (including <strong>user</strong>) so STT can fail silently when blocked.</div>
+          </div>
+
+          <div class="feature">
+            <div class="t">Room scalability</div>
+            <div class="d">Room names are engineering context for routing and organization — identity remains global.</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="screenshots">
+        <h2>Screenshots</h2>
+        <p class="lead">Replace the placeholders below with real screenshots when you’re ready.</p>
+
+        <div class="grid">
+          <div class="shot">
+            <div class="ph">Dashboard</div>
+            <div class="pad">
+              <div class="t">Web dashboard</div>
+              <div class="d">Enrollment & monitoring interface (placeholder).</div>
+            </div>
+          </div>
+
+          <div class="shot">
+            <div class="ph">Home Assistant</div>
+            <div class="pad">
+              <div class="t">HA entities</div>
+              <div class="d">Per-person controls & sensors (placeholder).</div>
+            </div>
+          </div>
+
+          <div class="shot">
+            <div class="ph">Live</div>
+            <div class="pad">
+              <div class="t">Live identification</div>
+              <div class="d">Active pipeline identity tagging (placeholder).</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="quickstart" class="steps">
+        <h2>Quick Start</h2>
+        <p class="lead">High-level deployment flow. The repo docs should contain the real commands for your release package.</p>
+
+        <div class="step">
+          <div class="k"><span class="badge">1</span><strong>Install & configure</strong></div>
+          <div class="small">Copy example configs, set MQTT, and point paths where your installation expects them.</div>
+          <div class="code"># see repo docs for your exact steps</div>
+        </div>
+
+        <div class="step">
+          <div class="k"><span class="badge">2</span><strong>Start services</strong></div>
+          <div class="small">Bring up global services first, then add room nodes.</div>
+          <div class="code"># systemd / scripts as provided by the repo</div>
+        </div>
+
+        <div class="step">
+          <div class="k"><span class="badge">3</span><strong>Enroll voices</strong></div>
+          <div class="small">Enroll known speakers, verify matches, and tune thresholds from Home Assistant.</div>
+          <div class="code"># enroll tooling / dashboard actions</div>
+        </div>
+      </section>
+
+      <section id="download" class="download">
+        <h2>Download</h2>
+        <p class="lead">Releases live on GitHub. That’s where the real artifacts, checksums, and notes belong.</p>
+
+        <div class="panel">
+          <div class="pill">v1.0 • Sherpa Edition</div>
+          <div style="height:10px"></div>
+          <a class="btn primary" style="width:100%" href="https://github.com/cybericebyte/VoiceBM/releases/latest" target="_blank" rel="noopener">
+            Go to Latest Release
+          </a>
+          <div class="small">Downloads, hashes, and release notes are published on the release page.</div>
+        </div>
+      </section>
+
+      <section id="ai">
+        <h2>AI Assistants</h2>
+        <p class="lead">Two lanes, two strengths. Use what you like.</p>
+
+        <div class="grid">
+          <div class="feature">
+            <div class="t">ChatGPT Assistant</div>
+            <div class="d">Support GPT for VoiceBM discussion, troubleshooting, and explanation.</div>
+            <div style="height:12px"></div>
+            <a class="btn" style="width:100%" href="https://chatgpt.com/g/g-68e55ecea6888191bb871536408fa73b-home-assistant-voicebm-voice-biometrics" target="_blank" rel="noopener">Open GPT</a>
+          </div>
+
+          <div class="feature">
+            <div class="t">Claude Artifact</div>
+            <div class="d">Published Claude artifact for deeper design and implementation context.</div>
+            <div style="height:12px"></div>
+            <a class="btn" style="width:100%" href="claude.html">Open Embedded Artifact</a>
+            <div class="small">
+              Source:
+              <a href="https://claude.ai/public/artifacts/918fa86a-7b8f-4ac5-a4a7-28c581d29cdd" target="_blank" rel="noopener">
+                claude.ai/public/artifacts/918fa86a…
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer>
+        <div>
+          <strong>VoiceBM</strong> — developed collaboratively by David M. Dryver Sr. with contributions from Anthropic’s Claude and OpenAI’s GPT.
+        </div>
+
+        <div class="footlinks">
+          <a href="https://github.com/cybericebyte/VoiceBM" target="_blank" rel="noopener">Repository</a>
+          <a href="https://github.com/cybericebyte/VoiceBM/issues" target="_blank" rel="noopener">Issues</a>
+          <a href="https://github.com/cybericebyte/VoiceBM/releases/latest" target="_blank" rel="noopener">Releases</a>
+          <a href="claude.html">Claude Artifact</a>
+          <a href="https://chatgpt.com/g/g-68e55ecea6888191bb871536408fa73b-home-assistant-voicebm-voice-biometrics" target="_blank" rel="noopener">GPT Assistant</a>
+        </div>
+
+        <div class="small" style="margin-top:12px">
+          © 2025 David M. Dryver Sr. • MIT License
+        </div>
+      </footer>
+    </div>
+  </main>
+</body>
+</html>
