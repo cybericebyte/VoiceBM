@@ -1,0 +1,616 @@
+# VoiceBM v1.0 Systemd Services - Complete Reference
+# Generated: December 17, 2025
+# Total Service Files: 13 + 1 timer + 1 target = 15 files
+
+This document contains all systemd service files, timer, and target used by VoiceBM v1.0.
+These files are deployed to /etc/systemd/system/ during installation.
+
+## Changes in v1.0:
+- Added voicebm-thing-engine.service (identity management)
+- Added voicebm-dashboard.service (Flask web UI)
+- Updated voicebm-stt.service to use Sherpa-ONNX
+- All services now reference voicebm_config.py for centralized config
+- Total services: 13 (was 11)
+
+Placeholders used:
+  {VOICEBM_BASE} - Installation directory (e.g., /home/user/voicebm)
+  {CONDA_PATH} - Path to Miniforge/conda (e.g., /home/user/miniforge3)
+
+Service Management:
+  Start all:    sudo systemctl start voicebm.target
+  Stop all:     sudo systemctl stop voicebm.target
+  Status all:   sudo systemctl status voicebm.target
+  Enable boot:  sudo systemctl enable voicebm.target
+  
+  Individual:   sudo systemctl start voicebm-stt.service
+                sudo systemctl status voicebm-thing-engine.service
+
+================================================================================
+
+################################################################################
+# SERVICE FILES INCLUDED IN THIS DOCUMENT
+################################################################################
+
+1. voicebm-stt.service - Main STT processing engine (Sherpa-ONNX)
+2. voicebm-global-publisher.service - Creates global MQTT device
+3. voicebm-thing-engine.service - Identity management (NEW in v1.0)
+4. voicebm-dashboard.service - Flask web UI (NEW in v1.0, optional)
+5. voicebm-commands.service - MQTT command handler
+6. voicebm-cluster-publisher.service - Publishes clustering data
+7. voicebm-enrollment-watcher.service - Watches for new enrollments
+8. voicebm-vad.service - Voice Activity Detection
+9. voicebm-retention.service - Manages recording retention
+10. voicebm-audio-server.service - HTTP audio server
+11. voicebm-wav-http.service - WAV file HTTP server
+12. stt-proxy.service - STT proxy service
+13. voicebm-cleanup.service - Cleanup service
+14. voicebm-cleanup.timer - Timer for cleanup service
+15. voicebm.target - Master target grouping all services
+
+================================================================================
+
+################################################################################
+# FILE: voicebm-stt.service
+# TEMPLATE: voicebm-stt.service.template
+# INSTALLED TO: /etc/systemd/system/voicebm-stt.service
+# PURPOSE: Main STT processing with Sherpa-ONNX speaker identification
+################################################################################
+
+[Unit]
+Description=Voice Biometrics STT Analysis Service (Sherpa-ONNX)
+After=network.target mosquitto.service
+PartOf=voicebm.target
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -c 'source {CONDA_PATH}/etc/profile.d/conda.sh && conda activate vb && python3 {VOICEBM_BASE}/bin/voicebm_stt_service.py'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=voicebm.target
+
+
+################################################################################
+# FILE: voicebm-global-publisher.service
+# TEMPLATE: voicebm-global-publisher.service.template
+# INSTALLED TO: /etc/systemd/system/voicebm-global-publisher.service
+# PURPOSE: Creates global "Voice Biometrics" device in Home Assistant
+################################################################################
+
+[Unit]
+Description=VoiceBM Global Publisher (ID Injection + Latest Result)
+After=network.target mosquitto.service
+PartOf=voicebm.target
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 {VOICEBM_BASE}/bin/voicebm_global_publisher.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=voicebm.target
+
+
+################################################################################
+# FILE: voicebm-thing-engine.service
+# TEMPLATE: voicebm-thing-engine.service.template
+# INSTALLED TO: /etc/systemd/system/voicebm-thing-engine.service
+# PURPOSE: Identity management (transform, replace, merge, alias)
+# NEW IN v1.0
+################################################################################
+
+[Unit]
+Description=VoiceBM Thing Engine (Identity Management)
+After=network.target mosquitto.service
+PartOf=voicebm.target
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -c 'source {CONDA_PATH}/etc/profile.d/conda.sh && conda activate vb && python3 {VOICEBM_BASE}/bin/thing_engine.py'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=voicebm.target
+
+
+################################################################################
+# FILE: voicebm-dashboard.service
+# TEMPLATE: voicebm-dashboard.service.template
+# INSTALLED TO: /etc/systemd/system/voicebm-dashboard.service
+# PURPOSE: Flask web UI for enrollment and system management (port 5000)
+# NEW IN v1.0 - OPTIONAL SERVICE
+################################################################################
+
+[Unit]
+Description=VoiceBM Dashboard (Flask Web UI)
+After=network.target voicebm-stt.service
+Wants=voicebm-stt.service
+PartOf=voicebm.target
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+ExecStart=/bin/bash -c 'source {CONDA_PATH}/etc/profile.d/conda.sh && conda activate vb && python3 {VOICEBM_BASE}/bin/voicebm_dashboard.py'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target voicebm.target
+
+
+################################################################################
+# FILE: voicebm-commands.service
+# TEMPLATE: voicebm-commands.service.template
+# INSTALLED TO: /etc/systemd/system/voicebm-commands.service
+# PURPOSE: Handles MQTT commands (label/reject/enroll)
+################################################################################
+
+[Unit]
+Description=VoiceBM MQTT Commands (label/reject)
+After=network-online.target
+Wants=network-online.target
+PartOf=voicebm.target
+
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -c 'source {CONDA_PATH}/etc/profile.d/conda.sh && conda activate vb && python3 {VOICEBM_BASE}/bin/mqtt_commands.py'
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+
+
+################################################################################
+# FILE: voicebm-cluster-publisher.service
+# TEMPLATE: voicebm-cluster-publisher.service.template
+# INSTALLED TO: /etc/systemd/system/voicebm-cluster-publisher.service
+# PURPOSE: Publishes voice clustering data to MQTT for enrollment
+################################################################################
+
+[Unit]
+Description=VoiceBM Cluster Publisher
+After=voicebm-embedder.service network-online.target
+Wants=voicebm-embedder.service network-online.target
+PartOf=voicebm.target
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -c 'source {CONDA_PATH}/etc/profile.d/conda.sh && conda activate vb && python3 {VOICEBM_BASE}/bin/cluster_publisher.py'
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+
+
+################################################################################
+# FILE: voicebm-enrollment-watcher.service
+# TEMPLATE: voicebm-enrollment-watcher.service.template
+# INSTALLED TO: /etc/systemd/system/voicebm-enrollment-watcher.service
+# PURPOSE: Watches /enroll directory and creates per-person HA devices
+################################################################################
+
+[Unit]
+Description=VoiceBM Enrollment Watcher
+After=network-online.target
+Wants=network-online.target
+PartOf=voicebm.target
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 {VOICEBM_BASE}/bin/enrollment_watcher.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+
+
+################################################################################
+# FILE: voicebm-vad.service
+# TEMPLATE: voicebm-vad.service.template
+# INSTALLED TO: /etc/systemd/system/voicebm-vad.service
+# PURPOSE: Voice Activity Detection filter (removes non-speech audio)
+################################################################################
+
+[Unit]
+Description=VoiceBM VAD Filter (living)
+After=voicebm-recorder.service
+Wants=voicebm-recorder.service
+PartOf=voicebm.target
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+ExecStart=/bin/bash -c 'source {CONDA_PATH}/etc/profile.d/conda.sh && conda activate vb && python3 {VOICEBM_BASE}/bin/vad_filter.py'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=voicebm.target
+
+
+################################################################################
+# FILE: voicebm-retention.service
+# TEMPLATE: voicebm-retention.service.template
+# INSTALLED TO: /etc/systemd/system/voicebm-retention.service
+# PURPOSE: Manages recording retention (3-day WAV file retention)
+################################################################################
+
+[Unit]
+Description=VoiceBM Retention
+After=voicebm-recorder.service
+Wants=voicebm-recorder.service
+PartOf=voicebm.target
+
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 {VOICEBM_BASE}/bin/retention.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
+
+################################################################################
+# FILE: voicebm-audio-server.service
+# TEMPLATE: voicebm-audio-server.service.template
+# INSTALLED TO: /etc/systemd/system/voicebm-audio-server.service
+# PURPOSE: HTTP server for audio file playback (port 9090)
+################################################################################
+
+[Unit]
+Description=Voice Biometrics Audio HTTP Server
+After=network.target
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+ExecStart=/usr/bin/python3 {VOICEBM_BASE}/bin/audio_server.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
+
+################################################################################
+# FILE: voicebm-wav-http.service
+# TEMPLATE: voicebm-wav-http.service.template
+# INSTALLED TO: /etc/systemd/system/voicebm-wav-http.service
+# PURPOSE: Simple HTTP server for WAV file access (port 8000)
+################################################################################
+
+[Unit]
+Description=VoiceBM WAV HTTP (8000)
+After=network-online.target
+Wants=network-online.target
+PartOf=voicebm.target
+
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}/recordings
+ExecStart=/usr/bin/python3 -m http.server 8000 --bind 0.0.0.0 --directory {VOICEBM_BASE}/recordings
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+
+
+################################################################################
+# FILE: stt-proxy.service
+# TEMPLATE: stt-proxy.service.template
+# INSTALLED TO: /etc/systemd/system/stt-proxy.service
+# PURPOSE: OpenAI-compatible STT proxy (optional)
+################################################################################
+
+# /etc/systemd/system/stt-proxy.service
+[Unit]
+Description=OpenAI-compatible STT proxy
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/stt_proxy
+Environment=DEFAULT_MODEL=quartznet
+ExecStart=/opt/stt_proxy/.venv/bin/uvicorn proxy:app --host 10.50.60.58 --port 7077 --log-level debug
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+
+
+
+################################################################################
+# FILE: voicebm-cleanup.service
+# TEMPLATE: voicebm-cleanup.service.template
+# INSTALLED TO: /etc/systemd/system/voicebm-cleanup.service
+# PURPOSE: One-shot service to delete expired WAV files
+################################################################################
+
+[Unit]
+Description=VoiceBM Recording Cleanup - Delete expired WAV files
+After=network.target
+
+[Service]
+Type=oneshot
+User=ice
+Group=ice
+WorkingDirectory={VOICEBM_BASE}
+ExecStart=/usr/bin/python3 {VOICEBM_BASE}/bin/cleanup_recordings.py
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
+
+################################################################################
+# FILE: voicebm-cleanup.timer
+# TEMPLATE: voicebm-cleanup.timer.template
+# INSTALLED TO: /etc/systemd/system/voicebm-cleanup.timer
+# PURPOSE: Timer to run cleanup daily at 2 AM
+################################################################################
+
+[Unit]
+Description=VoiceBM Recording Cleanup Timer - Run daily at 2 AM
+Requires=voicebm-cleanup.service
+
+[Timer]
+OnCalendar=daily
+OnCalendar=02:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
+
+################################################################################
+# FILE: voicebm.target
+# GENERATED: Created by deploy_global_services.sh
+# INSTALLED TO: /etc/systemd/system/voicebm.target
+# PURPOSE: Master target grouping all VoiceBM services
+# UPDATED: v1.0 includes thing-engine and dashboard
+################################################################################
+
+[Unit]
+Description=Voice Biometrics System v1.0
+After=network.target mosquitto.service
+Wants=voicebm-stt.service
+Wants=voicebm-global-publisher.service
+Wants=voicebm-thing-engine.service
+Wants=voicebm-commands.service
+Wants=voicebm-cluster-publisher.service
+Wants=voicebm-enrollment-watcher.service
+Wants=voicebm-vad.service
+Wants=voicebm-retention.service
+Wants=voicebm-audio-server.service
+Wants=voicebm-wav-http.service
+Wants=stt-proxy.service
+
+[Install]
+WantedBy=multi-user.target
+
+
+################################################################################
+# PASSIVE (PER-ROOM) SERVICES
+# These are deployed per-room using replicate_node.sh
+################################################################################
+
+Per room, 3 additional services are created:
+
+1. voicebm-recorder-{ROOM}.service
+   - Records audio from RTSP camera stream
+   - Template: recorder.service.template
+   - Captures 6-second WAV clips continuously
+
+2. voicebm-embedder-{ROOM}.service
+   - Generates Sherpa-ONNX voice embeddings from recordings
+   - Template: embedder.service.template
+   - Uses sherpa_embed.py wrapper (~70ms per embedding)
+
+3. voicebm-publisher-{ROOM}.service
+   - Scores embeddings against enrolled gallery
+   - Publishes identification results to MQTT
+   - Template: publisher.service.template
+
+Example for 'living' room:
+  voicebm-recorder-living.service
+  voicebm-embedder-living.service
+  voicebm-publisher-living.service
+
+Example for 'bedroom' room:
+  voicebm-recorder-bedroom.service
+  voicebm-embedder-bedroom.service
+  voicebm-publisher-bedroom.service
+
+These are NOT included in voicebm.target and run independently.
+
+
+################################################################################
+# SERVICE DEPENDENCIES DIAGRAM
+################################################################################
+
+voicebm.target
+├── voicebm-stt.service (STT analysis with Sherpa-ONNX)
+├── voicebm-global-publisher.service (Global HA device)
+├── voicebm-thing-engine.service (Identity management) [NEW v1.0]
+├── voicebm-commands.service (MQTT command handler)
+├── voicebm-cluster-publisher.service (Clustering data)
+├── voicebm-enrollment-watcher.service (Person devices)
+├── voicebm-vad.service (Voice activity detection)
+├── voicebm-retention.service (Recording cleanup)
+├── voicebm-audio-server.service (Audio HTTP server)
+├── voicebm-wav-http.service (WAV HTTP server)
+└── stt-proxy.service (STT proxy - optional)
+
+Optional (enable manually):
+└── voicebm-dashboard.service (Flask web UI) [NEW v1.0]
+
+Per-room (created by replicate_node.sh):
+├── voicebm-recorder-{room}.service
+├── voicebm-embedder-{room}.service
+└── voicebm-publisher-{room}.service
+
+Timer:
+└── voicebm-cleanup.timer → voicebm-cleanup.service
+
+
+################################################################################
+# SERVICE MANAGEMENT COMMANDS
+################################################################################
+
+## Start/Stop All Services
+
+# Start everything
+sudo systemctl start voicebm.target
+
+# Stop everything
+sudo systemctl stop voicebm.target
+
+# Check status
+sudo systemctl status voicebm.target
+
+
+## Individual Service Management
+
+# Start specific service
+sudo systemctl start voicebm-stt.service
+
+# Stop specific service
+sudo systemctl stop voicebm-thing-engine.service
+
+# Restart service
+sudo systemctl restart voicebm-global-publisher.service
+
+# View logs
+journalctl -u voicebm-stt.service -f
+
+
+## Enable/Disable Boot Startup
+
+# Enable on boot
+sudo systemctl enable voicebm.target
+
+# Disable on boot
+sudo systemctl disable voicebm.target
+
+# Enable individual service
+sudo systemctl enable voicebm-dashboard.service
+
+
+## Dashboard (Optional)
+
+# Enable and start dashboard
+sudo systemctl enable voicebm-dashboard.service
+sudo systemctl start voicebm-dashboard.service
+
+# Access at: http://your-ip:5000
+
+
+## Room Services
+
+# Check room services
+systemctl status voicebm-*-living.service
+
+# Restart room embedder
+sudo systemctl restart voicebm-embedder-bedroom.service
+
+
+################################################################################
+# TROUBLESHOOTING
+################################################################################
+
+## Service Won't Start
+
+# Check logs
+journalctl -u voicebm-stt.service -n 50
+
+# Check configuration
+cat {VOICEBM_BASE}/config.json
+
+# Verify conda environment
+source {CONDA_PATH}/etc/profile.d/conda.sh
+conda activate vb
+python3 -c "import sherpa_onnx; print('Sherpa-ONNX OK')"
+
+
+## Services Keep Restarting
+
+# Check system resources
+systemctl status voicebm.target
+journalctl -u voicebm-stt.service --since "5 minutes ago"
+
+# Verify MQTT connection
+mosquitto_sub -h broker -t 'voicebm/#' -v
+
+
+## Reload After Changes
+
+# Reload systemd after editing service files
+sudo systemctl daemon-reload
+
+# Restart affected services
+sudo systemctl restart voicebm.target
+
+
+################################################################################
+# PATH AGNOSTIC NOTES
+################################################################################
+
+All service files use placeholders that are replaced during deployment:
+
+{VOICEBM_BASE} - Replaced with actual installation directory
+{CONDA_PATH}   - Replaced with actual conda installation path
+
+Examples:
+  {VOICEBM_BASE} → /home/user/voicebm
+  {CONDA_PATH}   → /home/user/miniforge3
+
+This allows VoiceBM to be installed anywhere on the system without
+modifying service templates.
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
+
+VoiceBM v1.0 - Systemd Services Complete Reference
+Generated: December 17, 2025
+
+Total Services: 13 global + 3 per room + 1 timer + 1 target
+New in v1.0: Thing Engine, Dashboard, Sherpa-ONNX integration

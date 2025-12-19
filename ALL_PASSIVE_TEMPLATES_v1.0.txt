@@ -1,0 +1,1162 @@
+# VoiceBM v1.0 Passive Templates - Complete Reference
+# Generated: December 17, 2025
+# Total Files: 10
+
+This document contains all passive (room-specific) templates used by VoiceBM v1.0.
+Each template uses placeholders that are replaced during room deployment:
+  {ROOM} - Room name (e.g., 'living', 'bedroom')
+  {VOICEBM_BASE} - Installation directory
+  {CONDA_PATH} - Path to Miniforge/conda
+  {SHERPA_BIN} - Path to sherpa_embed.py executable
+  {SHERPA_MODEL} - Path to Sherpa-ONNX model (nemo_en_titanet_small.onnx)
+  {MQTT_BROKER} - MQTT broker IP
+  {MQTT_PORT} - MQTT port
+  {MQTT_USER} - MQTT username
+  {MQTT_PASS} - MQTT password
+
+## Changes in v1.0:
+- Migrated from WeSpeaker to Sherpa-ONNX
+- embed_ROOM.sh now uses Sherpa Python wrapper
+- publish_identity_ROOM.py converted from hardcoded 'living'
+- All templates use centralized voicebm_config.py
+
+These templates are deployed per-room using replicate_node.sh
+
+================================================================================
+
+
+################################################################################
+# FILE: embed_ROOM.sh.template
+# TYPE: template
+################################################################################
+
+#!/usr/bin/env bash
+set -eo pipefail
+if [ ! -f "$1" ] || [ $(stat -c%s "$1") -lt 1000 ]; then
+    exit 0
+fi
+
+source {CONDA_PATH}/etc/profile.d/conda.sh
+conda activate vb
+
+IN={VOICEBM_BASE}/recordings/{ROOM}
+OUT={VOICEBM_BASE}/embeddings/{ROOM}
+LOG={VOICEBM_BASE}/meta/logs.jsonl
+
+# Sherpa worker (vb Python has sherpa-onnx installed)
+PYTHON={CONDA_PATH}/envs/vb/bin/python3
+SHERPA_WORKER={SHERPA_BIN}
+SHERPA_MODEL={SHERPA_MODEL}
+
+mkdir -p "$OUT" "$(dirname "$LOG")"
+
+while true; do
+  shopt -s nullglob
+  for f in "$IN"/*.wav; do
+    b=$(basename "$f" .wav)
+    t="$OUT/$b.txt"
+    [[ -f "$t" ]] && continue
+    "$PYTHON" "$SHERPA_WORKER" --model "$SHERPA_MODEL" --wav "$f" --out "$t" || true
+    python3 - <<'PY' "$f" "$t" >>"$LOG"
+import json, os, sys, time
+row=dict(ts_iso=time.strftime('%Y-%m-%dT%H:%M:%SZ'),
+         camera='{ROOM}', wav=sys.argv[1], emb=sys.argv[2],
+         model='sherpa-nemo-titanet', device='cpu')
+print(json.dumps(row))
+PY
+  done
+  sleep 2
+done
+
+
+
+################################################################################
+# FILE: embedder.service.template
+# TYPE: template
+################################################################################
+
+[Unit]
+Description=VoiceBM Embedder (living)
+After=voicebm-recorder.service
+Wants=voicebm-recorder.service
+PartOf=voicebm.target
+
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+ExecStart=/bin/bash -c 'source {CONDA_PATH}/etc/profile.d/conda.sh && conda activate vb && {VOICEBM_BASE}/bin/embed_{ROOM}.sh'
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+
+
+
+################################################################################
+# FILE: enroll_suggest_ROOM.py.template
+# TYPE: template
+################################################################################
+
+#!/usr/bin/env python3
+"""Voice Biometric Enrollment & Scoring - Compares new voices against gallery"""
+
+import os
+import json
+import time
+import glob
+import numpy as np
+import paho.mqtt.client as mqtt
+
+# MQTT Configuration (centralized)
+import sys
+sys.path.insert(0, '{VOICEBM_BASE}')
+from voicebm_config import get_mqtt_config
+
+mqtt_config = get_mqtt_config()
+BROKER = mqtt_config['broker']
+PORT = mqtt_config['port']
+USER = mqtt_config['user']
+PASS = mqtt_config['password']
+
+base = "{VOICEBM_BASE}"
+rec_dir = f"{base}/recordings/{ROOM}"
+emb_dir = f"{base}/embeddings/{ROOM}"
+out_dir = f"{base}/out"
+latest_json = f"{out_dir}/{ROOM}.latest.json"
+thresh_json = f"{out_dir}/thresholds.json"
+topic_base = "voicebm/{ROOM}"
+
+def load_json(path, default):
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except:
+        return default
+
+def save_json(path, obj):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(obj, f)
+    os.replace(tmp, path)
+
+def cosine(a, b):
+    an = np.linalg.norm(a)
+    bn = np.linalg.norm(b)
+    if an == 0 or bn == 0:
+        return 0.0
+    return float(np.dot(a, b) / (an * bn))
+
+def load_vec(path):
+    try:
+        return np.loadtxt(path)
+    except:
+        return None
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    if reason_code == 0:
+        print(f"Connected to MQTT broker at {BROKER}:{PORT}")
+    else:
+        print(f"Failed to connect, reason code: {reason_code}")
+
+def on_publish(client, userdata, mid, reason_code, properties):
+    print(f"Published scoring result {mid}")
+
+os.makedirs(out_dir, exist_ok=True)
+
+thr = load_json(
+    thresh_json,
+    {"NEW_T": 0.222, "MATCH_T": 0.222, "REFRESH_T": 0.252, "CLUSTER_N": 5}
+)
+NEW_T = float(thr.get("NEW_T", 0.222))
+MATCH_T = float(thr.get("MATCH_T", 0.222))
+REFRESH_T = float(thr.get("REFRESH_T", 0.252))
+CLUSTER_N = int(thr.get("CLUSTER_N", 5))
+
+client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+client.username_pw_set(USER, PASS)
+client.on_connect = on_connect
+client.on_publish = on_publish
+
+try:
+    client.connect(BROKER, PORT, 60)
+except Exception as e:
+    print(f"Connection failed: {e}")
+    exit(1)
+
+client.loop_start()
+print(f"Monitoring {rec_dir} for new voice recordings...")
+
+gallery = []
+for p in sorted(glob.glob(f"{emb_dir}/*.txt")):
+    v = load_vec(p)
+    if v is not None:
+        gallery.append((os.path.basename(p), v))
+
+print(f"Loaded {len(gallery)} enrolled voice samples")
+
+last_seen = None
+while True:
+    try:
+        wavs = sorted(glob.glob(f"{rec_dir}/*.wav"))
+        if not wavs:
+            time.sleep(1)
+            continue
+
+        newest = wavs[-1]
+        if newest == last_seen:
+            time.sleep(0.4)
+            continue
+        last_seen = newest
+
+        qry_path = newest.replace(".wav", ".txt").replace("/recordings/", "/embeddings/")
+        q = load_vec(qry_path)
+        if q is None:
+            time.sleep(0.4)
+            continue
+
+        best_name, best_score = None, -1.0
+        if gallery:
+            for name, v in gallery:
+                s = cosine(q, v)
+                if s > best_score:
+                    best_score, best_name = s, name
+        else:
+            best_score = 0.0
+
+        out = {
+            "file": os.path.basename(newest),
+            "best_match": best_name,
+            "score": round(float(best_score), 4)
+        }
+        save_json(latest_json, out)
+
+        accepted = best_score >= MATCH_T if gallery else False
+        result_payload = {"room": " {ROOM}", **out}
+        
+        client.publish(f"{topic_base}/result", json.dumps(result_payload), qos=1, retain=True)
+        client.publish(f"{topic_base}/score", str(out["score"]), qos=1, retain=True)
+        client.publish(f"{topic_base}/accepted", "ON" if accepted else "OFF", qos=1, retain=True)
+        
+        print(f"Processed: {out['file']}, score={out['score']}, accepted={accepted}")
+
+        time.sleep(0.4)
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        break
+    except Exception as e:
+        print(f"Error: {e}")
+        time.sleep(0.5)
+
+client.loop_stop()
+client.disconnect()
+
+
+################################################################################
+# FILE: mqtt_publisher_ROOM.py.template
+# TYPE: template
+################################################################################
+
+#!/usr/bin/env python3
+"""MQTT Event Publisher for Voice Biometrics"""
+
+import os
+import time
+import json
+import pathlib
+import datetime
+import paho.mqtt.client as mqtt
+
+ROOM = "living"
+# MQTT Configuration (centralized)
+import sys
+sys.path.insert(0, '{VOICEBM_BASE}')
+from voicebm_config import get_mqtt_config
+
+mqtt_config = get_mqtt_config()
+BROKER = mqtt_config['broker']
+PORT = mqtt_config['port']
+USER = mqtt_config['user']
+PASS = mqtt_config['password']
+
+REC_DIR = "{VOICEBM_BASE}/recordings/living"
+EMB_DIR = "{VOICEBM_BASE}/embeddings/living"
+META_LAB = "{VOICEBM_BASE}/meta/labeled"
+HTTP_BASE = "http://10.50.60.58:8000"  # â† PRESERVED â€” DO NOT CHANGE
+
+EVENT_TOPIC = f"voicebm/{ROOM}/event"  # â† UNIFIED ROOT
+
+def iso(ts):
+    return datetime.datetime.utcfromtimestamp(ts).replace(microsecond=0).isoformat() + "Z"
+
+def expire_at_for(event_id, recorded_ts):
+    sidecar = os.path.join(META_LAB, f"{event_id}.json")
+    if os.path.exists(sidecar):
+        try:
+            with open(sidecar) as f:
+                j = json.load(f)
+                if "expire_at" in j:
+                    return j["expire_at"]
+        except:
+            pass
+    return iso(recorded_ts + 3*24*3600)
+
+def latest_pair():
+    wavs = sorted([p for p in pathlib.Path(REC_DIR).glob("*.wav")],
+                  key=lambda p: p.stat().st_mtime, reverse=True)
+    for w in wavs:
+        event_id = w.stem
+        emb = os.path.join(EMB_DIR, event_id + ".txt")
+        if os.path.exists(emb):
+            return event_id, str(w), emb, w.stat().st_mtime
+    return None, None, None, None
+
+def build_payload(event_id, wav_path, emb_path, recorded_ts):
+    return {
+        "id": event_id,
+        "ts": iso(recorded_ts),
+        "room": ROOM,
+        "confidence": round(0.0, 4),
+        "suggestion": None,
+        "wav_url": f"{HTTP_BASE}/recordings/{ROOM}/{os.path.basename(wav_path)}",
+        "emb_path": emb_path,
+        "retention": {
+            "expire_at": expire_at_for(event_id, recorded_ts),
+            "policy": "3d_all; +3d_on_label"
+        }
+    }
+
+def publish_event(payload):
+    """Publish using proven, reliable pattern"""
+    try:
+        client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+        client.username_pw_set(USER, PASS)
+
+        # Optional: Add logging callbacks if needed
+        # def on_connect(...): print("Connected")
+        # client.on_connect = on_connect
+
+        print(f"Connecting to {BROKER}:{PORT}...")
+        client.connect(BROKER, PORT, 60)
+
+        print(f"Publishing to {EVENT_TOPIC}...")
+        result = client.publish(EVENT_TOPIC, json.dumps(payload), qos=1, retain=True)
+
+        client.loop_start()
+        success = result.wait_for_publish(timeout=5)
+        client.loop_stop()
+        client.disconnect()
+
+        if success:
+            print(f"Published event: {payload['id']}")
+        else:
+            print(f"Publish timeout: {payload['id']}")
+
+    except Exception as e:
+        print(f"MQTT publish failed: {e}")
+
+def main():
+    print("MQTT Publisher started â€” monitoring for new voice events...")
+    last_sent = None
+    while True:
+        try:
+            eid, wav, emb, ts = latest_pair()
+            if eid and eid != last_sent:
+                payload = build_payload(eid, wav, emb, ts)
+                publish_event(payload)
+                last_sent = eid
+            time.sleep(0.5)
+        except KeyboardInterrupt:
+            print("\nShutting down...")
+            break
+        except Exception as e:
+            print(f"Error: {e}")
+            time.sleep(1)
+
+if __name__ == "__main__":
+    main()
+
+
+################################################################################
+# FILE: publish_identity_ROOM.py.template
+# TYPE: template
+################################################################################
+
+#!/usr/bin/env python3
+"""Voice Biometric Identity Publisher with HA MQTT Discovery
+
+STARTUP BEHAVIOR:
+- ALWAYS publishes discovery configs (so HA knows about entities)
+- Only publishes INITIAL STATE on first-ever run
+- On subsequent restarts, HA's retained state is respected
+- This prevents restarts from resetting user-configured states
+
+Tracking file: {VOICEBM_BASE}/meta/discovery_initialized_{ROOM}
+- If file exists: skip initial state publishing
+- If file missing: publish initial states, create file
+"""
+
+import os
+import json
+import time
+import numpy as np
+import paho.mqtt.client as mqtt
+from pathlib import Path
+
+# MQTT Configuration (centralized)
+import sys
+sys.path.insert(0, '{VOICEBM_BASE}')
+from voicebm_config import get_mqtt_config
+
+mqtt_config = get_mqtt_config()
+BROKER = mqtt_config['broker']
+PORT = mqtt_config['port']
+USER = mqtt_config['user']
+PASS = mqtt_config['password']
+
+ROOM = "{ROOM}"
+LOGS_FILE = "{VOICEBM_BASE}/meta/logs.jsonl"  # JSONL event log
+EMB_DIR = f"{VOICEBM_BASE}/embeddings/{ROOM}"
+ENROLL_DIR = "{VOICEBM_BASE}/enroll"
+THR = "{VOICEBM_BASE}/out/thresholds.json"
+TOPIC = f"voicebm/{ROOM}/identity"
+PERSON_ID_TOPIC = f"voicebm/{ROOM}/person_id"
+CURRENT_EVENT_TOPIC = f"voicebm/{ROOM}/current_event"
+PROCESSED_FILE = f"{VOICEBM_BASE}/meta/processed_publisher_{ROOM}.txt"
+META_LAB = "{VOICEBM_BASE}/meta/labeled"
+
+# Tracking file for first-run detection (per-room)
+DISCOVERY_INITIALIZED_FILE = f"{VOICEBM_BASE}/meta/discovery_initialized_{ROOM}"
+
+def jload(p, d=None):
+    try:
+        with open(p, "r") as f:
+            return json.load(f)
+    except:
+        return d
+
+def get_processed_ids():
+    """Get set of event IDs that have been processed (labeled or rejected)"""
+    processed = set()
+    
+    # Check labeled folder
+    if os.path.exists(META_LAB):
+        for fname in os.listdir(META_LAB):
+            if fname.endswith('.json'):
+                processed.add(fname[:-5])
+    
+    # Check processed tracking file
+    if os.path.exists(PROCESSED_FILE):
+        with open(PROCESSED_FILE, 'r') as f:
+            processed.update(line.strip() for line in f if line.strip())
+    
+    return processed
+
+def mark_processed(eid):
+    """Mark an event as processed"""
+    os.makedirs(os.path.dirname(PROCESSED_FILE), exist_ok=True)
+    with open(PROCESSED_FILE, 'a') as f:
+        f.write(f"{eid}\n")
+
+def get_oldest_unprocessed_event():
+    """Read OLDEST unprocessed event from JSONL log for this room"""
+    if not os.path.exists(LOGS_FILE):
+        return None
+    
+    processed = get_processed_ids()
+    
+    with open(LOGS_FILE, 'r') as f:
+        for line in f:
+            if not line.strip():
+                continue
+            
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            
+            # Filter by room (camera field in logs)
+            if event.get('camera') != ROOM:
+                continue
+                
+            wav_path = event.get('wav', '')
+            eid = os.path.basename(wav_path).replace('.wav', '')
+            
+            if eid in processed:
+                continue
+                
+            if not os.path.exists(wav_path):
+                print(f"ÃƒÂ¢Ã…Â¡Ã‚Â   Skipping {eid}: WAV file missing")
+                mark_processed(eid)
+                continue
+            emb_path = event.get('emb', '')
+            if not os.path.exists(emb_path):
+                print(f"ÃƒÂ¢Ã…Â¡Ã‚Â   Skipping {eid}: Embedding file missing")
+                mark_processed(eid)
+                continue
+            
+            return event
+    return None
+
+def load_vec(ref):
+    try:
+        path = os.path.join(EMB_DIR, ref)
+        return np.loadtxt(path)
+    except:
+        return None
+
+def load_gallery():
+    """Load enrolled speakers from /enroll/ directory structure."""
+    people = {}
+    enroll_path = Path(ENROLL_DIR)
+    
+    if not enroll_path.exists():
+        print(f"Warning: Enrollment directory not found at {ENROLL_DIR}")
+        return {}
+    
+    try:
+        for person_dir in enroll_path.iterdir():
+            if not person_dir.is_dir():
+                continue
+            
+            person_id = person_dir.name
+            embeddings_dir = person_dir / "embeddings"
+            metadata_file = person_dir / "metadata.json"
+            
+            if metadata_file.exists():
+                try:
+                    with open(metadata_file, 'r') as f:
+                        metadata = json.load(f)
+                        display_name = metadata.get('display_name', person_id.replace('_', ' ').title())
+                except:
+                    display_name = person_dir.name.replace('_', ' ').title()
+            else:
+                display_name = person_id.replace('_', ' ').title()
+            
+            if not embeddings_dir.exists():
+                continue
+            
+            vectors = []
+            for emb_file in embeddings_dir.glob("*.txt"):
+                try:
+                    v = np.loadtxt(emb_file)
+                    if v is not None and len(v) > 0:
+                        vectors.append(v)
+                except Exception as e:
+                    print(f"  ÃƒÂ¢Ã…Â¡Ã‚Â   Failed to load {emb_file.name}: {e}")
+            
+            if vectors:
+                people[(person_id, display_name)] = vectors
+                print(f"  Loaded {len(vectors)} embeddings for {display_name} ({person_id})")
+    
+    except Exception as e:
+        print(f"Error loading gallery: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    cents = {}
+    for (sid, name), vecs in people.items():
+        cents[(sid, name)] = np.mean(vecs, axis=0)
+    
+    print(f"Loaded {len(cents)} enrolled speakers from {ENROLL_DIR}")
+    return cents
+
+def cos(a, b):
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a, b) / (norm_a * norm_b))
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    if reason_code == 0:
+        print(f"Connected to MQTT broker at {BROKER}:{PORT}")
+        client.subscribe(f"{PERSON_ID_TOPIC}/set", qos=1)
+    else:
+        print(f"Failed to connect, reason code: {reason_code}")
+
+stored_person_id = ""
+
+def on_message(client, userdata, msg):
+    global stored_person_id
+    if msg.topic == f"{PERSON_ID_TOPIC}/set":
+        stored_person_id = msg.payload.decode("utf-8")
+        client.publish(PERSON_ID_TOPIC, stored_person_id, qos=1, retain=True)
+        print(f"Person ID set to: {stored_person_id}")
+
+def on_publish(client, userdata, mid, reason_code, properties):
+    pass
+
+def is_first_run():
+    """Check if this is the first time discovery has been published."""
+    return not os.path.exists(DISCOVERY_INITIALIZED_FILE)
+
+def mark_initialized():
+    """Mark that discovery has been initialized."""
+    os.makedirs(os.path.dirname(DISCOVERY_INITIALIZED_FILE), exist_ok=True)
+    with open(DISCOVERY_INITIALIZED_FILE, 'w') as f:
+        f.write(time.strftime('%Y-%m-%d %H:%M:%S'))
+    print("  Marked discovery as initialized")
+
+def publish_discovery(client):
+    """Publish Home Assistant MQTT Discovery configs."""
+    discovery_prefix = "homeassistant"
+    first_run = is_first_run()
+    
+    if first_run:
+        print("First run detected - will publish initial states")
+    else:
+        print("Subsequent run - respecting HA state (discovery only)")
+    
+    device = {
+        "identifiers": [f"voicebm_{ROOM}"],
+        "name": "Voice Biometrics Living",
+        "manufacturer": "David M. Dryver Sr.",
+        "model": "Home Assistant Voice Biometrics",
+        "sw_version": "1.0"
+    }
+    
+    configs = {
+        "speaker": {
+            "name": "Living Speaker",
+            "unique_id": f"voicebm_{ROOM}_speaker",
+            "state_topic": TOPIC,
+            "value_template": "{{ value_json.display_name if value_json.display_name else 'Unknown' }}",
+            "json_attributes_topic": TOPIC,
+            "icon": "mdi:account-voice",
+            "device": device
+        },
+        "confidence": {
+            "name": "Living Voice Confidence",
+            "unique_id": f"voicebm_{ROOM}_confidence",
+            "state_topic": TOPIC,
+            "value_template": "{{ (value_json.confidence * 100) | round(1) }}",
+            "unit_of_measurement": "%",
+            "icon": "mdi:percent",
+            "device": device
+        },
+        "decision": {
+            "name": "Living Voice Decision",
+            "unique_id": f"voicebm_{ROOM}_decision",
+            "state_topic": TOPIC,
+            "value_template": "{{ value_json.decision }}",
+            "icon": "mdi:check-decagram",
+            "device": device
+        },
+        "speaker_id": {
+            "name": "Living Speaker ID",
+            "unique_id": f"voicebm_{ROOM}_speaker_id",
+            "state_topic": TOPIC,
+            "value_template": "{{ value_json.speaker_id if value_json.speaker_id else 'none' }}",
+            "icon": "mdi:identifier",
+            "device": device
+        },
+        "event_id": {
+            "name": "Living Current Event ID",
+            "unique_id": f"voicebm_{ROOM}_event_id",
+            "state_topic": CURRENT_EVENT_TOPIC,
+            "icon": "mdi:file-document",
+            "device": device
+        },
+        "audio_url": {
+            "name": "Living Audio URL",
+            "unique_id": f"voicebm_{ROOM}_audio_url",
+            "state_topic": f"voicebm/{ROOM}/audio_url",
+            "icon": "mdi:volume-high",
+            "device": device
+        },
+        "score": {
+            "name": "Living Voice Score",
+            "unique_id": f"voicebm_{ROOM}_score",
+            "state_topic": f"voicebm/{ROOM}/score",
+            "icon": "mdi:counter",
+            "device": device
+        }
+    }
+    
+    for key, config in configs.items():
+        client.publish(f"{discovery_prefix}/sensor/voicebm_{ROOM}_{key}/config", json.dumps(config), qos=1, retain=True)
+    
+    # Binary sensor for Voice Accepted
+    accepted_config = {
+        "name": "Living Voice Accepted",
+        "unique_id": f"voicebm_{ROOM}_accepted",
+        "state_topic": f"voicebm/{ROOM}/accepted",
+        "payload_on": "ON",
+        "payload_off": "OFF",
+        "device_class": "sound",
+        "icon": "mdi:check-circle",
+        "device": device
+    }
+    client.publish(f"{discovery_prefix}/binary_sensor/voicebm_{ROOM}_accepted/config", json.dumps(accepted_config), qos=1, retain=True)
+    
+    text_config = {
+        "name": "Living Person ID Input",
+        "unique_id": f"voicebm_{ROOM}_person_id",
+        "command_topic": f"{PERSON_ID_TOPIC}/set",
+        "state_topic": PERSON_ID_TOPIC,
+        "icon": "mdi:account-edit",
+        "device": device
+    }
+    client.publish(f"{discovery_prefix}/text/voicebm_{ROOM}_person_id/config", json.dumps(text_config), qos=1, retain=True)
+    
+    buttons = {
+        "play": {"name": "Living Play Audio", "icon": "mdi:play-circle", "topic": "play_audio"},
+        "label": {"name": "Living Label Speaker", "icon": "mdi:check-circle", "topic": "label_trigger"},
+        "reject": {"name": "Living Reject Speaker", "icon": "mdi:close-circle", "topic": "reject_trigger"}
+    }
+    
+    for key, btn in buttons.items():
+        btn_config = {
+            "name": btn["name"],
+            "unique_id": f"voicebm_{ROOM}_{key}_button",
+            "command_topic": f"voicebm/{ROOM}/{btn['topic']}",
+            "payload_press": "PRESS",
+            "icon": btn["icon"],
+            "device": device
+        }
+        client.publish(f"{discovery_prefix}/button/voicebm_{ROOM}_{key}/config", json.dumps(btn_config), qos=1, retain=True)
+    
+    current_speaker_config = {
+        "name": "Living Current Speaker",
+        "unique_id": f"voicebm_{ROOM}_current_speaker",
+        "state_topic": f"voicebm/{ROOM}/current_speaker",
+        "icon": "mdi:account-voice",
+        "device": device
+    }
+    client.publish(f"{discovery_prefix}/sensor/voicebm_{ROOM}_current_speaker/config", json.dumps(current_speaker_config), qos=1, retain=True)
+    
+    if first_run:
+        client.publish(f"voicebm/{ROOM}/current_speaker", "none", qos=1, retain=True)
+        print("  Initial state: current_speaker = none")
+    
+    # NOTE: ID Injection is GLOBAL (voicebm/inject_identity) - not per-room
+    # Global publisher handles this switch
+    
+    threshold_config = {
+        "name": "Living Match Threshold",
+        "unique_id": f"voicebm_{ROOM}_threshold",
+        "command_topic": f"voicebm/{ROOM}/threshold/set",
+        "state_topic": f"voicebm/{ROOM}/threshold",
+        "min": 0.01,
+        "max": 1.00,
+        "step": 0.01,
+        "mode": "slider",
+        "icon": "mdi:tune",
+        "device": device
+    }
+    client.publish(f"{discovery_prefix}/number/voicebm_{ROOM}_threshold/config", json.dumps(threshold_config), qos=1, retain=True)
+    
+    if first_run:
+        try:
+            with open(THR, 'r') as f:
+                thr = json.load(f)
+                threshold_value = float(thr.get("MATCH_T", 0.22))
+        except:
+            threshold_value = 0.22
+        
+        client.publish(f"voicebm/{ROOM}/threshold", str(threshold_value), qos=1, retain=True)
+        print(f"  Initial state: threshold = {threshold_value}")
+        
+        mark_initialized()
+    
+    print("Published Home Assistant MQTT Discovery configs")
+
+current_event_id = None
+advance_to_next = False
+
+def main():
+    global current_event_id, stored_person_id, advance_to_next
+    
+    c = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+    c.username_pw_set(USER, PASS)
+    c.on_connect = on_connect
+    c.on_publish = on_publish
+    c.on_message = on_message
+    
+    try:
+        c.connect(BROKER, PORT, 60)
+    except Exception as e:
+        print(f"Connection failed: {e}")
+        return
+    
+    c.loop_start()
+    publish_discovery(c)
+    
+    c.subscribe(f"voicebm/{ROOM}/label_trigger", qos=1)
+    c.subscribe(f"voicebm/{ROOM}/reject_trigger", qos=1)
+    
+    def handle_buttons(client, userdata, msg):
+        global current_event_id, stored_person_id, advance_to_next
+        if msg.topic.endswith("/label_trigger") and current_event_id and stored_person_id:
+            label_cmd = {"id": current_event_id, "person_id": stored_person_id}
+            c.publish(f"voicebm/{ROOM}/label", json.dumps(label_cmd), qos=1)
+            print(f"ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ ENROLL: {current_event_id} ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ {stored_person_id}")
+            mark_processed(current_event_id)
+            advance_to_next = True
+        elif msg.topic.endswith("/reject_trigger") and current_event_id:
+            reject_cmd = {"id": current_event_id}
+            c.publish(f"voicebm/{ROOM}/reject", json.dumps(reject_cmd), qos=1)
+            print(f"ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ REJECT: {current_event_id}")
+            mark_processed(current_event_id)
+            advance_to_next = True
+        else:
+            print(f"ÃƒÂ¢Ã…Â¡Ã‚Â   Button pressed but conditions not met: event={current_event_id}, person={stored_person_id}")
+    
+    c.message_callback_add(f"voicebm/{ROOM}/label_trigger", handle_buttons)
+    c.message_callback_add(f"voicebm/{ROOM}/reject_trigger", handle_buttons)
+    
+    # NOTE: ID Injection is GLOBAL - passive nodes don't control it
+    c.subscribe(f"voicebm/{ROOM}/threshold/set", qos=1)
+    
+    def handle_threshold_update(client, userdata, msg):
+        try:
+            new_threshold = float(msg.payload.decode('utf-8'))
+            print(f"Threshold update: {new_threshold:.2f}")
+            
+            thr_path = "{VOICEBM_BASE}/out/thresholds.json"
+            
+            try:
+                with open(thr_path, 'r') as f:
+                    thresholds = json.load(f)
+            except:
+                thresholds = {}
+            
+            thresholds['MATCH_T'] = new_threshold
+            thresholds['last_updated'] = time.strftime('%Y-%m-%d %H:%M:%S')
+            
+            with open(thr_path, 'w') as f:
+                json.dump(thresholds, f, indent=2)
+            
+            client.publish(f"voicebm/{ROOM}/threshold", str(new_threshold), qos=1, retain=True)
+            
+            print(f"  Match threshold updated: {new_threshold:.2f}")
+            
+        except Exception as e:
+            print(f"  Error handling threshold update: {e}")
+    
+    c.message_callback_add(f"voicebm/{ROOM}/threshold/set", handle_threshold_update)
+    
+    print(f"Monitoring {LOGS_FILE} for oldest unprocessed voice events...")
+
+    while True:
+        try:
+            if advance_to_next or current_event_id is None:
+                event = get_oldest_unprocessed_event()
+                advance_to_next = False
+                
+                if not event:
+                    if current_event_id is not None:
+                        print("No more unprocessed files")
+                        current_event_id = None
+                    time.sleep(2)
+                    continue
+                
+                wav_path = event.get("wav", "")
+                emb_path = event.get("emb", "")
+                event_ts = event.get("ts_iso")
+                
+                wav = os.path.basename(wav_path) if wav_path else ""
+                emb = os.path.basename(emb_path) if emb_path else ""
+                
+                new_event_id = wav.replace(".wav", "") if wav else None
+                
+                if new_event_id and new_event_id != current_event_id:
+                    current_event_id = new_event_id
+                    c.publish(CURRENT_EVENT_TOPIC, current_event_id, qos=1, retain=True)
+                    audio_url = f"http://10.50.60.58:9090/{ROOM}/{wav}"
+                    c.publish(f"voicebm/{ROOM}/audio_url", audio_url, qos=1, retain=True)
+                    
+                    thr = jload(THR, {"MATCH_T": 0.22})
+                    MATCH_T = float(thr.get("MATCH_T", 0.22))
+                    
+                    v = load_vec(emb) if emb else None
+                    
+                    sid = None
+                    name = None
+                    conf = 0.0
+                    decision = "unknown"
+                    
+                    cents = load_gallery()
+                    if v is not None and cents:
+                        best_sid = None
+                        best_name = None
+                        best_sim = -1.0
+                        for (psid, pname), cent in cents.items():
+                            sim = cos(v, cent)
+                            if sim > best_sim:
+                                best_sim = sim
+                                best_sid = psid
+                                best_name = pname
+                        
+                        conf = best_sim
+                        if best_sim >= MATCH_T:
+                            sid = best_sid
+                            name = best_name
+                            decision = "accepted"
+                    
+                    stored_person_id = sid
+
+                    payload = {
+                        "room": ROOM,
+                        "speaker_id": sid,
+                        "display_name": name,
+                        "confidence": round(conf, 4),
+                        "decision": decision,
+                        "wav": wav,
+                        "ts": event_ts
+                    }
+                    
+                    result = c.publish(TOPIC, json.dumps(payload), qos=1, retain=True)
+                    if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                        print(f"Published: {current_event_id} - {name or 'Unknown'} ({sid or 'none'}), confidence={conf:.4f}")
+                    else:
+                        print(f"Publish failed with code: {result.rc}")
+            
+            time.sleep(1)
+                
+        except KeyboardInterrupt:
+            print("\nShutting down...")
+            break
+        except Exception as e:
+            print(f"Error in main loop: {e}")
+            time.sleep(1)
+    
+    c.loop_stop()
+    c.disconnect()
+
+if __name__ == "__main__":
+    main()
+
+
+
+################################################################################
+# FILE: publish_mqtt_ROOM.py.template
+# TYPE: template
+################################################################################
+
+#!/usr/bin/env python3
+"""Simple MQTT publisher for living.latest.json results"""
+
+import json
+import os
+import time
+import paho.mqtt.client as mqtt
+
+# MQTT Configuration (centralized)
+import sys
+sys.path.insert(0, '{VOICEBM_BASE}')
+from voicebm_config import get_mqtt_config
+
+mqtt_config = get_mqtt_config()
+BROKER = mqtt_config['broker']
+PORT = mqtt_config['port']
+USER = mqtt_config['user']
+PASS = mqtt_config['password']
+
+latest_json = "{VOICEBM_BASE}/out/{ROOM}.latest.json"
+thresh_json = "{VOICEBM_BASE}/out/thresholds.json"
+topic_base = "voicebm/{ROOM}"
+
+def load_json(p):
+    try:
+        with open(p, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def accepted(score, thresholds):
+    t = thresholds.get("MATCH_T", 0.21)
+    try:
+        return float(score) >= float(t)
+    except:
+        return False
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    if reason_code == 0:
+        print(f"Connected to MQTT broker at {BROKER}:{PORT}")
+    else:
+        print(f"Failed to connect, reason code: {reason_code}")
+
+def on_publish(client, userdata, mid, reason_code, properties):
+    print(f"Published result {mid}")
+
+client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+client.username_pw_set(USER, PASS)
+client.on_connect = on_connect
+client.on_publish = on_publish
+
+try:
+    client.connect(BROKER, PORT, 60)
+except Exception as e:
+    print(f"Connection failed: {e}")
+    exit(1)
+
+client.loop_start()
+print(f"Monitoring {latest_json} for changes...")
+
+last_mtime = 0
+while True:
+    try:
+        mtime = os.path.getmtime(latest_json)
+        if mtime != last_mtime:
+            last_mtime = mtime
+            data = load_json(latest_json)
+            thr = load_json(thresh_json)
+            sc = float(data.get("score", 0.0))
+            acc = accepted(sc, thr)
+            out = {
+                "room": " {ROOM}",
+                "file": data.get("file"),
+                "best_match": data.get("best_match"),
+                "score": round(sc, 4),
+                "accepted": acc
+            }
+            client.publish(f"{topic_base}/result", json.dumps(out), qos=1, retain=True)
+            client.publish(f"{topic_base}/score", str(out["score"]), qos=1, retain=True)
+            client.publish(f"{topic_base}/accepted", "ON" if acc else "OFF", qos=1, retain=True)
+            print(f"Published: {out['file']}, score={out['score']}, accepted={acc}")
+        time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        break
+    except Exception as e:
+        print(f"Error: {e}")
+        time.sleep(1)
+
+client.loop_stop()
+client.disconnect()
+
+
+################################################################################
+# FILE: publisher.service.template
+# TYPE: template
+################################################################################
+
+[Unit]
+Description=VoiceBM Identity Publisher (living -> MQTT)
+After=voicebm-embedder.service network-online.target
+Wants=voicebm-embedder.service network-online.target
+PartOf=voicebm.target
+
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -c 'source {CONDA_PATH}/etc/profile.d/conda.sh && conda activate vb && python3 {VOICEBM_BASE}/bin/publish_identity_{ROOM}.py'
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+
+
+
+################################################################################
+# FILE: rec_ROOM.sh.template
+# TYPE: template
+################################################################################
+
+#!/usr/bin/env bash
+# ============================================================================
+# VoiceBM Recorder - Living Room (Passive Node)
+# ============================================================================
+# CRITICAL: The shebang and set lines below are NOT optional.
+# 
+# This script runs in a locked base environment that also interacts with:
+#   - Conda environment (vb) for embeddings
+#   - Docker container for ONNX ASR
+#
+# The "set -euo pipefail" ensures:
+#   -e  = Exit immediately on ANY error (ffmpeg dies â†’ script dies)
+#   -u  = Treat unset variables as errors
+#   -o pipefail = Pipeline failures propagate (critical for ffmpeg)
+#
+# When ffmpeg exits/fails, this script MUST exit so systemd can restart it.
+# DO NOT wrap ffmpeg in a while loop - that prevents systemd recovery.
+# ============================================================================
+set -euo pipefail
+
+# Configuration
+ROOM="living"
+REC_DIR="{VOICEBM_BASE}/recordings/${ROOM}"
+RTSP_URL='rtsp://admin:oE8Oe72!@10.20.30.143/Preview_01_main'
+
+# Safety limit - prevent disk from filling up
+# At 6-second segments, 5000 files = ~8.3 hours of recordings
+MAX_FILES=5000
+
+# Create directory
+mkdir -p "$REC_DIR"
+
+# Safety check: Exit if too many files (systemd will retry via RestartSec)
+FILE_COUNT=$(find "$REC_DIR" -name "*.wav" -type f 2>/dev/null | wc -l)
+if [ "$FILE_COUNT" -ge "$MAX_FILES" ]; then
+    echo "âš  SAFETY LIMIT: ${FILE_COUNT} files (max ${MAX_FILES}). Exiting for cleanup."
+    echo "  Retention service should clear old files. Systemd will retry."
+    exit 1
+fi
+
+# Run ffmpeg as main process
+# When ffmpeg exits (error or signal), script exits, systemd restarts
+exec ffmpeg -hide_banner -nostdin -rtsp_transport tcp \
+    -i "$RTSP_URL" \
+    -map 0:a:0 -ac 1 -ar 16000 -vn \
+    -f segment -segment_time 6 -reset_timestamps 1 -strftime 1 -y \
+    "${REC_DIR}/${ROOM}_%Y%m%d_%H%M%S.wav"
+
+
+
+################################################################################
+# FILE: recorder.service.template
+# TYPE: template
+################################################################################
+
+[Unit]
+Description=VoiceBM Recorder (living)
+After=network-online.target
+Wants=network-online.target
+PartOf=voicebm.target
+
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+ExecStart={VOICEBM_BASE}/bin/rec_living.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+
+
+
+################################################################################
+# FILE: scorer.service.template
+# TYPE: template
+################################################################################
+
+[Unit]
+Description=VoiceBM Scorer (living)
+After=voicebm-embedder.service network-online.target
+Wants=voicebm-embedder.service network-online.target
+PartOf=voicebm.target
+
+[Service]
+Type=simple
+User=ice
+WorkingDirectory={VOICEBM_BASE}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -c 'source {CONDA_PATH}/etc/profile.d/conda.sh && conda activate vb && python3 {VOICEBM_BASE}/bin/enroll_suggest_{ROOM}.py'
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+
+

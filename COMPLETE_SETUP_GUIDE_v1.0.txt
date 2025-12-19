@@ -1,0 +1,1103 @@
+# VoiceBM v1.0 Complete Setup and Installation Guide
+# Consolidated Documentation for LLM Consumption
+# Generated: December 17, 2025
+
+This document combines all setup, installation, configuration, and operational
+documentation for VoiceBM v1.0 into a single comprehensive reference.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+1. INSTALLATION GUIDE
+2. README (Quick Start)
+3. WHAT CHANGED (v1.0 Changelog)
+4. VERIFICATION CHECKLIST
+5. DEPLOYMENT SCRIPTS
+6. LLM SYSTEM PROMPT CONTRACT
+
+
+================================================================================
+SECTION 1: INSTALLATION GUIDE
+================================================================================
+
+# VoiceBM v1.0 Complete Installation Guide
+
+## What is VoiceBM?
+
+VoiceBM is a sophisticated voice biometric identification system that integrates with Home Assistant to provide speaker recognition and identification across multiple rooms. It uses Sherpa-ONNX neural networks for voice embeddings and Wyoming protocol for ASR (Automatic Speech Recognition).
+
+## System Requirements
+
+- **OS**: Ubuntu 20.04+ (tested on Ubuntu 24.04)
+- **Architecture**: x86_64 or aarch64 (Jetson platforms supported)
+- **RAM**: Minimum 4GB (8GB+ recommended)
+- **Disk Space**: ~3GB for models and dependencies
+- **Docker**: Optional (for Wyoming ASR features)
+- **Network**: Accessible MQTT broker and Home Assistant instance
+
+## Architecture Overview
+
+VoiceBM v1.0 consists of three main components:
+
+1. **Sherpa-ONNX** (Conda environment)
+   - Python 3.9 environment
+   - CPU-only speaker recognition (~70ms per embedding)
+   - Runs as systemd services
+
+2. **Wyoming ONNX ASR** (Docker container - optional)
+   - Speech-to-text engine
+   - Python 3.12+ (isolated in Docker)
+   - Wyoming protocol server
+
+3. **VoiceBM Services** (Systemd)
+   - 10 global services for voice processing
+   - Thing Engine for identity management
+   - Optional web dashboard
+   - Per-room passive monitoring services
+   - MQTT integration with Home Assistant
+
+**Key Design Principle**: Each component is isolated (Docker/Conda/System) to prevent version conflicts.
+
+## What's New in v1.0
+
+✅ **Sherpa-ONNX** - Replaced WeSpeaker, 60-162x faster (~70ms vs 11+ seconds)
+✅ **Thing Engine** - Identity management (transform, replace, merge, alias)
+✅ **Web Dashboard** - Flask UI for enrollment and system control
+✅ **Global Publisher** - Unified Home Assistant device
+✅ **Pre-flight Checks** - Detects frozen packages, TensorFlow conflicts
+✅ **ONNX ASR Language Choice** - English-only or multilingual
+✅ **Centralized Config** - voicebm_config.py module
+✅ **Path-Agnostic** - Install anywhere with configurable paths
+
+## Quick Start Installation
+
+### Step 1: Run Setup Wizard
+
+The setup wizard will:
+- Run pre-flight system checks
+- Install/detect Miniforge conda
+- Create Python 3.9 environment
+- Install Sherpa-ONNX from PyPI
+- Download Sherpa speaker model (~4MB)
+- Install sherpa_embed.py wrapper
+- Setup Wyoming ASR Docker container (optional)
+- Gather your configuration
+- Generate config.json
+
+```bash
+# Extract package
+tar -xzf VoiceBM_v1.0_Complete.tar.gz
+cd VoiceBM_v1.0_Complete
+
+# Run setup wizard
+./setup_voicebm.sh
+```
+
+The wizard will prompt you for:
+- MQTT broker details (IP, port, credentials)
+- Home Assistant IP address
+- Installation directory
+- Room configurations (camera RTSP URLs)
+- Detection thresholds (passive: 0.22, active: 0.40-0.60)
+- ONNX ASR language choice (English-only or multilingual)
+
+### Step 2: Deploy Global Services
+
+After setup completes:
+
+```bash
+# Copy config to installation directory
+sudo cp config.json /path/to/voicebm/
+
+# Deploy global services
+cd scripts
+sudo ./deploy_global_services.sh
+```
+
+This will:
+- Deploy voicebm_config.py (centralized configuration)
+- Deploy 10 global Python services
+- Deploy 11 systemd service files
+- Enable and start all services
+- Verify MQTT connection
+
+### Step 3: Deploy Passive Nodes
+
+For each room:
+
+```bash
+# Deploy room-specific services
+sudo ./replicate_node.sh living
+sudo ./replicate_node.sh bedroom
+sudo ./replicate_node.sh kitchen
+```
+
+Each room gets:
+- Recorder service (RTSP → WAV)
+- Embedder service (WAV → Sherpa embeddings)
+- Publisher service (Identity scoring → MQTT)
+
+### Step 4: Verification
+
+```bash
+# Check all services
+systemctl status voicebm-*.service
+
+# Check Home Assistant
+# Look for "Voice Biometrics" device with:
+# - Switch: ID Injection
+# - Sensors: Latest Result, Current Speaker
+# - Per-room devices with identity sensors
+# - Per-person devices with blocklist switches
+```
+
+## Detailed Configuration
+
+### config.json Structure
+
+```json
+{
+  "mqtt": {
+    "broker": "10.50.60.59",
+    "port": 1883,
+    "user": "mqtt-user",
+    "password": "your-password"
+  },
+  "hosts": {
+    "home_assistant": "10.50.60.59",
+    "orin_agx": "10.50.60.58"
+  },
+  "paths": {
+    "voicebm_base": "/home/user/voicebm",
+    "sherpa_bin": "/home/user/.local/bin/sherpa_embed.py",
+    "sherpa_model": "/home/user/sherpa_models/nemo_en_titanet_small.onnx",
+    "conda_path": "/home/user/miniforge3"
+  },
+  "audio_server": {
+    "host": "10.50.60.58",
+    "port": 9090,
+    "base_url": "http://10.50.60.58:9090"
+  },
+  "rooms": {
+    "living": {
+      "rtsp_url": "rtsp://user:pass@camera-ip/stream",
+      "recorder_enabled": true
+    }
+  },
+  "thresholds": {
+    "passive": 0.22,
+    "active": 0.50
+  }
+}
+```
+
+### Key Settings Explained
+
+**Thresholds:**
+- `passive`: Background scoring threshold (0.22 recommended)
+  - Used by passive identity publishers
+  - Lower = more permissive matching
+- `active`: Live STT injection threshold (0.40-0.60 typical)
+  - Used by STT service for real-time identification
+  - Controlled by Home Assistant slider
+  - Higher = require stronger match confidence
+
+**Paths:**
+- All paths are fully configurable
+- Sherpa model downloaded automatically during setup
+- Conda environment name: `vb` (Python 3.9)
+
+## System Services
+
+### Global Services (10)
+
+1. **voicebm-stt.service** - STT pipeline with speaker identification
+2. **voicebm-global-publisher.service** - Global Home Assistant device
+3. **voicebm-audio-server.service** - Audio file HTTP server
+4. **voicebm-wav-http.service** - WAV file access
+5. **voicebm-cluster-publisher.service** - Enrollment cluster management
+6. **voicebm-enrollment-watcher.service** - Person device discovery
+7. **voicebm-commands.service** - MQTT command handler
+8. **voicebm-retention.service** - Recording retention management
+9. **voicebm-vad.service** - Voice activity detection filter
+10. **voicebm-thing-engine.service** - Identity management
+
+### Optional Services
+
+- **voicebm-dashboard.service** - Flask web UI on port 5000
+
+```bash
+sudo systemctl enable voicebm-dashboard.service
+sudo systemctl start voicebm-dashboard.service
+```
+
+### Per-Room Services (3 per room)
+
+1. **voicebm-recorder-{room}.service** - RTSP audio capture
+2. **voicebm-embedder-{room}.service** - Sherpa-ONNX embedding generation
+3. **voicebm-publisher-{room}.service** - Identity scoring and publishing
+
+## Sherpa-ONNX Speaker Recognition
+
+VoiceBM v1.0 uses Sherpa-ONNX for speaker embeddings:
+
+**Model:** nemo_en_titanet_small.onnx
+**Source:** https://github.com/k2-fsa/sherpa-onnx
+**Performance:** ~70ms per embedding (60-162x faster than WeSpeaker)
+**Platform:** CPU-only (no GPU required)
+
+### Sherpa Components
+
+1. **sherpa_embed.py** - Python wrapper script
+   - Location: `$HOME/.local/bin/sherpa_embed.py`
+   - Usage: `sherpa_embed.py --model <model.onnx> --wav <input.wav> --out <output.txt>`
+   - Installed automatically by setup wizard
+
+2. **embed_stt.sh** - Bash wrapper for STT pipeline
+   - 66 lines with full logging and error checking
+   - Timing metrics and file validation
+   - Used by voicebm-stt.service
+
+3. **embed_ROOM.sh** - Passive node embedding loop
+   - Continuous background processing
+   - Automatic retry on failure
+   - JSONL logging to meta/logs.jsonl
+
+### Testing Sherpa
+
+```bash
+# Activate conda environment
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate vb
+
+# Test embedding generation
+~/.local/bin/sherpa_embed.py \
+  --model ~/sherpa_models/nemo_en_titanet_small.onnx \
+  --wav test_audio.wav \
+  --out test_output.txt
+
+# Expected: Completes in <200ms, output file contains space-separated floats
+```
+
+## Home Assistant Integration
+
+### Automatic MQTT Discovery
+
+VoiceBM automatically creates entities via MQTT discovery:
+
+**Global Device: "Voice Biometrics"**
+- Switch: ID Injection (voicebm/inject_identity)
+- Sensor: Latest Voice Result
+- Sensor: Current Speaker
+
+**Per-Room Devices:**
+- Sensor: Speaker Identity
+- Sensor: Person ID
+- Sensor: Confidence Score
+- Sensor: Decision (accepted/unknown/blocked)
+
+**Per-Person Devices:**
+- Binary Sensor: Voice Detected (person_id/voice)
+- Switch: Blocklist (voicebm/blocklist/person_id)
+- Last seen timestamp
+
+### MQTT Topics
+
+**Control Topics:**
+```
+voicebm/inject_identity - Toggle speaker ID injection
+voicebm/blocklist/{person_id}/set - Block/unblock speaker
+voicebm/pending_active/enroll - Enroll pending voice
+voicebm/pending_active/reject - Reject pending voice
+voicebm/pending_active/clear - Clear pending buffer
+```
+
+**Thing Engine Topics:**
+```
+voicebm/thing_engine/command - Execute identity operations
+voicebm/thing_engine/status - Operation status/results
+```
+
+**Status Topics:**
+```
+voicebm/{room}/identity - Current speaker display name
+voicebm/{room}/person_id - Person ID slug
+voicebm/{room}/confidence - Match confidence (0-1)
+voicebm/{room}/decision - Accept/unknown/blocked
+```
+
+## Thing Engine (Identity Management)
+
+NEW in v1.0: The Thing Engine provides powerful identity manipulation without re-enrollment.
+
+### Operations
+
+**Transform** - Change display name:
+```json
+{
+  "operation": "transform",
+  "person_id": "david",
+  "new_display_name": "David Sr."
+}
+```
+
+**Replace** - Swap identity labels:
+```json
+{
+  "operation": "replace",
+  "old_person_id": "david",
+  "new_person_id": "david_sr"
+}
+```
+
+**Merge** - Combine multiple identities:
+```json
+{
+  "operation": "merge",
+  "target_person_id": "david",
+  "source_person_ids": ["dave", "david_old"]
+}
+```
+
+**Add Alias** - Create alternative name:
+```json
+{
+  "operation": "add_alias",
+  "person_id": "david",
+  "alias": "Dad"
+}
+```
+
+### MQTT Control
+
+Publish to: `voicebm/thing_engine/command`
+
+```bash
+mosquitto_pub -t "voicebm/thing_engine/command" -m '{
+  "operation": "merge",
+  "target_person_id": "media_device",
+  "source_person_ids": ["echo", "tv", "soundbar"]
+}'
+```
+
+## Voice Enrollment
+
+### Method 1: Web Dashboard (Easiest)
+
+```bash
+# Enable dashboard
+sudo systemctl enable voicebm-dashboard.service
+sudo systemctl start voicebm-dashboard.service
+
+# Open browser
+http://your-ip:5000
+
+# Dashboard features:
+# - View pending voices
+# - Enroll with name
+# - Manage identities
+# - System status
+```
+
+### Method 2: Pending Active Buffer (MQTT)
+
+```bash
+# Listen to pending voices
+mosquitto_sub -t 'voicebm/pending_active' -v
+
+# When unknown voice detected, enroll via MQTT:
+mosquitto_pub -t 'voicebm/pending_active/enroll' -m '{
+  "id": "<pending_id>",
+  "person_id": "david",
+  "display_name": "David"
+}'
+```
+
+### Method 3: Clustering (Background)
+
+Voice clustering runs automatically in passive nodes.
+
+```bash
+# View clusters
+mosquitto_sub -t 'voicebm/living/clusters' -v
+
+# Each cluster represents a group of similar voices
+# Use dashboard or MQTT to enroll clusters
+```
+
+## Troubleshooting
+
+### Services Won't Start
+
+```bash
+# Check logs
+journalctl -u voicebm-stt.service -n 50
+
+# Common issues:
+# - Missing voicebm_config.py
+# - Wrong MQTT credentials in config.json
+# - Path placeholders not replaced
+
+# Fix:
+sudo systemctl daemon-reload
+sudo ./scripts/deploy_global_services.sh
+```
+
+### No Embeddings Created
+
+```bash
+# Check embedder service
+journalctl -u voicebm-embedder-living.service -f
+
+# Test Sherpa manually
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate vb
+~/.local/bin/sherpa_embed.py --model ~/sherpa_models/*.onnx --wav test.wav --out test.txt
+
+# Common issues:
+# - Sherpa model path wrong
+# - sherpa_embed.py not executable
+# - VAD filtering all audio
+```
+
+### Home Assistant Entities Not Appearing
+
+```bash
+# Check MQTT discovery
+mosquitto_sub -h broker -t 'homeassistant/#' -v
+
+# Check enrollment watcher
+journalctl -u voicebm-enrollment-watcher.service -f
+
+# Common issues:
+# - MQTT discovery disabled in HA
+# - Wrong broker credentials
+# - enrollment_watcher not running
+```
+
+### STT Not Working
+
+```bash
+# Check Wyoming ASR Docker
+docker ps | grep wyoming
+
+# Check handler
+docker logs <container_name>
+
+# Restart Docker container
+docker restart <container_name>
+```
+
+## Performance Optimization
+
+### Sherpa-ONNX Performance
+
+**Normal Operation:**
+- Embedding generation: 70ms average
+- Model loading: <1 second
+- Memory usage: ~200MB per service
+- CPU usage: <20% idle, <60% active
+
+**If slower:**
+- Check CPU throttling
+- Verify conda environment activation
+- Check for other processes using CPU
+- Consider reducing room count
+
+### VAD Tuning
+
+Voice Activity Detection filters ~90% of non-speech audio.
+
+```python
+# In vad_filter.py, adjust thresholds:
+VAD_THRESHOLD = 0.5  # Lower = more permissive
+MIN_SPEECH_DURATION = 1.0  # Minimum seconds of speech
+```
+
+## Upgrade from Previous Version
+
+### From WeSpeaker to Sherpa-ONNX
+
+```bash
+# 1. Stop all services
+sudo systemctl stop voicebm-*.service
+
+# 2. Backup existing enrollment
+cp -r /path/to/voicebm/enroll /backup/
+
+# 3. Run new installer
+./setup_voicebm.sh
+
+# 4. Deploy updated services
+sudo ./scripts/deploy_global_services.sh
+
+# 5. Deploy rooms
+sudo ./scripts/replicate_node.sh living
+sudo ./scripts/replicate_node.sh bedroom
+
+# Note: Existing embeddings remain compatible
+# Sherpa and WeSpeaker both use cosine similarity
+```
+
+## Additional Resources
+
+- **Model Source:** https://github.com/k2-fsa/sherpa-onnx
+- **Wyoming Protocol:** https://github.com/rhasspy/wyoming
+- **Home Assistant:** https://www.home-assistant.io/
+
+
+================================================================================
+SECTION 2: README (Quick Start)
+================================================================================
+
+# VoiceBM v1.0 - Voice Biometrics for Home Automation
+
+**Voice Biometrics for Home Automation**
+*Speaker identification and authentication for Home Assistant*
+
+## 🎯 What is VoiceBM?
+
+VoiceBM is a sophisticated voice biometrics system that provides real-time speaker identification for smart home automation. It operates on a "recycling center" model where passive nodes and active STT components collect voice samples, process them into enrolled speaker identities, and inject speaker ID tags into transcripts for LLM platforms.
+
+## Key Features
+
+✅ **Sherpa-ONNX Speaker Recognition** - Fast, accurate CPU-based voice biometrics (~70ms per embedding)
+✅ **Passive Voice Capture** - Continuous background monitoring via security cameras
+✅ **Active STT Integration** - Real-time speaker ID injection into Wyoming Protocol
+✅ **Home Assistant Integration** - Automatic MQTT discovery, binary sensors, switches
+✅ **Thing Engine** - Identity management (transform, replace, merge identities)
+✅ **Web Dashboard** - Flask-based UI for enrollment and system management
+✅ **Multi-Room Support** - Independent passive nodes for each room
+✅ **Path-Agnostic** - Deploy anywhere with configurable paths
+
+## 🚀 Quick Start
+
+```bash
+# 1. Run installer wizard
+./setup_voicebm.sh
+
+# 2. Deploy global services
+cd scripts
+sudo ./deploy_global_services.sh
+
+# 3. Deploy passive nodes (one per room)
+sudo ./replicate_node.sh living
+sudo ./replicate_node.sh bedroom
+```
+
+## 📦 What's New in v1.0
+
+✅ **Migrated to Sherpa-ONNX** (60-162x faster than WeSpeaker)
+✅ **Pre-flight system checks** (frozen packages, TensorFlow conflicts)
+✅ **ONNX ASR language choice** (English-only vs Multilingual)
+✅ **Thing Engine** - Identity management system
+✅ **Web Dashboard** - Flask UI for system control
+✅ **Global Publisher** - Unified Home Assistant device
+✅ **Centralized Configuration** - voicebm_config.py module
+✅ **Path-Agnostic Deployment** - Install anywhere
+
+## 📊 System Requirements
+
+- Ubuntu 20.04+ or Debian-based Linux
+- Python 3.9+
+- 4GB+ RAM
+- Docker (optional, for STT features)
+- Home Assistant 2024.1+
+- MQTT Broker
+
+## 🏗️ Architecture
+
+**Global Services:** STT pipeline, thing engine, dashboard, enrollment watcher, VAD filter, retention, MQTT commands
+**Passive Nodes:** Per-room recorder, embedder, publisher
+
+## ⚙️ Configuration
+
+Edit: `/home/user/voicebm/config.json`
+
+Key settings:
+- `mqtt.broker` - Your MQTT broker IP
+- `paths.sherpa_model` - Speaker recognition model
+- `thresholds.active` - Live detection threshold (0.40-0.60)
+
+## 🎤 Performance
+
+**Embedding Generation:**
+- Before (WeSpeaker): 11-14 seconds
+- After (Sherpa-ONNX): ~70ms
+- **Improvement: 60-162x faster**
+
+
+================================================================================
+SECTION 3: WHAT CHANGED (v1.0 Changelog)
+================================================================================
+
+# VoiceBM v1.0 - What Changed
+
+## 🎯 Major Changes
+
+### 1. Embedding Engine Migration
+
+**OLD:** WeSpeaker (PyTorch-based, 11+ seconds per embedding)
+**NEW:** Sherpa-ONNX (CPU-only, ~70ms per embedding)
+
+**Performance Improvement:** 60-162x faster
+
+**Files Changed:**
+- `setup_voicebm.sh` - Now installs Sherpa-ONNX instead of WeSpeaker
+- `templates/global/embed_stt.sh.template` - Uses Sherpa Python wrapper (16→66 lines)
+- `templates/passive/embed_ROOM.sh.template` - Uses Sherpa Python wrapper
+- **NEW:** `templates/global/sherpa_embed.py` - Python wrapper for Sherpa-ONNX
+
+**Config Changes:**
+```json
+// OLD:
+"wespeaker_bin": "/path/to/wespeaker"
+"wespeaker_model": "/path/to/wespeaker-ecapa-tdnn512-LM"
+
+// NEW:
+"sherpa_bin": "/path/to/sherpa_embed.py"
+"sherpa_model": "/path/to/nemo_en_titanet_small.onnx"
+```
+
+### 2. Pre-flight System Checks (NEW)
+
+`setup_voicebm.sh` now includes:
+- ✅ Frozen/held package detection
+- ✅ TensorFlow conflict resolution
+- ✅ Audio library verification
+
+### 3. ONNX ASR Enhancement (NEW)
+
+Wyoming ONNX ASR Docker now offers language choice:
+- **English-only** (tiny-en) - Faster, smaller
+- **Multilingual** (tiny) - Slower, larger
+
+### 4. Thing Engine - Identity Management (NEW)
+
+**NEW SERVICE:** `voicebm-thing-engine.service`
+**NEW TEMPLATE:** `templates/global/thing_engine.py.template`
+
+**Capabilities:**
+- **Transform** - Change display names without re-enrollment
+- **Replace** - Swap identity labels
+- **Merge** - Combine multiple identities into one
+- **Alias** - Create alternative names for same identity
+
+### 5. VoiceBM Dashboard - Web UI (NEW)
+
+**NEW SERVICE:** `voicebm-dashboard.service`
+**NEW TEMPLATE:** `templates/global/voicebm_dashboard.py.template`
+
+**Flask-based web interface:**
+- Voice enrollment
+- Identity management
+- System status monitoring
+- Real-time speaker detection
+- Threshold adjustment
+
+**Default URL:** http://your-ip:5000
+
+### 6. Global Publisher (NEW)
+
+**NEW SERVICE:** `voicebm-global-publisher.service`
+**NEW TEMPLATE:** `templates/global/voicebm_global_publisher.py.template`
+
+**Creates unified "Voice Biometrics" device in Home Assistant:**
+- Switch: ID Injection toggle
+- Sensor: Latest voice result
+- Sensor: Current speaker
+
+### 7. Centralized Configuration (NEW)
+
+**NEW MODULE:** `voicebm_config.py`
+**NEW TEMPLATE:** `templates/global/voicebm_config.py.template`
+
+**All services now use centralized config:**
+```python
+from voicebm_config import get_mqtt_config
+mqtt_config = get_mqtt_config()
+```
+
+## 📁 Template Changes
+
+### Added Templates (18)
+
+1. voicebm_stt_service.py.template (updated with live features)
+2. voicebm_global_publisher.py.template
+3. voicebm_config.py.template
+4. thing_engine.py.template
+5. voicebm_dashboard.py.template
+6. enrollment_watcher.py.template (updated)
+7. vad_filter.py.template (updated)
+8. voice_clustering.py.template (updated)
+9. voicebm-stt.service.template
+10. voicebm-global-publisher.service.template
+11. voicebm-vad.service.template
+12. voicebm-wav-http.service.template
+13. voicebm-thing-engine.service.template
+14. voicebm-dashboard.service.template
+15. embed_stt.sh.template (Sherpa version)
+16. embed_ROOM.sh.template (Sherpa version)
+17. sherpa_embed.py (wrapper script)
+18. publish_identity_ROOM.py.template (converted from living)
+
+### Removed Templates (1)
+
+❌ **voice_enrollment_api.py.template** - Replaced by Flask dashboard
+
+### Updated Templates (All existing)
+
+**All templates now:**
+- ✅ Use Sherpa-ONNX (not WeSpeaker)
+- ✅ Use `{PLACEHOLDERS}` for all paths
+- ✅ Import from voicebm_config.py
+- ✅ Use centralized MQTT config
+
+## 🗑️ Deprecated Features
+
+### Removed:
+- ❌ WeSpeaker engine
+- ❌ PyTorch dependency
+- ❌ voice_enrollment_api.py (replaced by dashboard)
+
+### Replaced:
+- WeSpeaker CLI → Sherpa Python wrapper
+- WeSpeaker model → Sherpa ONNX model
+- Manual enrollment API → Flask dashboard
+
+## 📈 Performance Improvements
+
+### Embedding Generation
+
+**Before (WeSpeaker):**
+- Time: 11-14 seconds per embedding
+- CPU usage: Very high
+- Model: wespeaker-ecapa-tdnn512-LM
+
+**After (Sherpa-ONNX):**
+- Time: ~70ms per embedding
+- CPU usage: Moderate
+- Model: nemo_en_titanet_small.onnx
+
+**Improvement:** 60-162x faster
+
+## 🔄 Migration Guide
+
+### From Previous Version
+
+**1. Backup existing installation:**
+```bash
+sudo systemctl stop voicebm-*.service
+cp -r /path/to/voicebm/enroll /backup/
+```
+
+**2. Run new installer:**
+```bash
+./setup_voicebm.sh
+```
+
+**3. Deploy updated services:**
+```bash
+sudo ./scripts/deploy_global_services.sh
+```
+
+**4. Notes:**
+- Existing embeddings remain compatible
+- Enrollment data is preserved
+- Sherpa-ONNX is much faster but uses same similarity algorithm
+
+
+================================================================================
+SECTION 4: VERIFICATION CHECKLIST
+================================================================================
+
+# VoiceBM v1.0 - Verification Checklist
+
+## ✅ Pre-Deployment Verification
+
+### 1. File Integrity
+
+- [x] 41 template files present
+- [x] 1 wrapper script (sherpa_embed.py)
+- [x] 2 deployment scripts
+- [x] 1 installer script
+- [x] config.json present
+
+**Verification:**
+```bash
+find templates -name "*.template" | wc -l  # Should be 41
+find templates/global -name "sherpa_embed.py"  # Should exist
+ls scripts/*.sh  # Should show 2 files
+ls setup_voicebm.sh config.json  # Should exist
+```
+
+### 2. WeSpeaker References
+
+- [x] No WeSpeaker in setup_voicebm.sh
+- [x] No WeSpeaker in templates
+- [x] No WeSpeaker in scripts
+- [x] Only Sherpa-ONNX references
+
+**Verification:**
+```bash
+grep -r "wespeaker" setup_voicebm.sh templates/ scripts/ | wc -l  # Should be 0
+grep -r "Sherpa\|sherpa" setup_voicebm.sh | wc -l  # Should be >0
+```
+
+### 3. Path Placeholders
+
+- [x] All templates use {VOICEBM_BASE}
+- [x] All templates use {SHERPA_BIN}
+- [x] All templates use {SHERPA_MODEL}
+- [x] All templates use {CONDA_PATH}
+- [x] No hardcoded /home/ice/ in templates
+
+## 🧪 Post-Installation Testing
+
+### Test 1: Clean Install
+
+```bash
+# On fresh Ubuntu system
+./setup_voicebm.sh
+# Expected: No errors, config.json created
+```
+
+**Pass Criteria:**
+- [ ] Miniforge installed or detected
+- [ ] Conda environment 'vb' created
+- [ ] Sherpa-ONNX installed
+- [ ] Model downloaded
+- [ ] sherpa_embed.py copied to .local/bin
+- [ ] config.json generated
+- [ ] No errors in output
+
+### Test 2: Template Rendering
+
+```bash
+cd scripts
+sudo ./deploy_global_services.sh
+```
+
+**Pass Criteria:**
+- [ ] All templates rendered without errors
+- [ ] No {PLACEHOLDER} remains in rendered files
+- [ ] All services copied to systemd
+- [ ] No "template not found" warnings for critical services
+
+### Test 3: Service Startup
+
+```bash
+sudo systemctl status voicebm-stt.service
+sudo systemctl status voicebm-global-publisher.service
+sudo systemctl status voicebm-thing-engine.service
+```
+
+**Pass Criteria:**
+- [ ] All services show "active (running)"
+- [ ] No errors in journalctl logs
+- [ ] MQTT connections established
+
+### Test 4: Sherpa Embedding
+
+```bash
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate vb
+~/.local/bin/sherpa_embed.py --model ~/sherpa_models/*.onnx --wav test.wav --out test.txt
+```
+
+**Pass Criteria:**
+- [ ] Embedding created in <200ms
+- [ ] Output file contains space-separated floats
+- [ ] No errors
+
+### Test 5: MQTT Discovery
+
+```bash
+# Check Home Assistant
+# Look for "Voice Biometrics" device
+```
+
+**Pass Criteria:**
+- [ ] Global device "Voice Biometrics" visible
+- [ ] Switch: ID Injection present
+- [ ] Sensors visible
+
+### Test 6: Thing Engine
+
+```bash
+# Publish to MQTT
+mosquitto_pub -t "voicebm/thing_engine/command" -m '{"operation":"transform","person_id":"test","new_display_name":"Test User"}'
+```
+
+**Pass Criteria:**
+- [ ] Operation acknowledged
+- [ ] Metadata updated
+- [ ] No errors in logs
+
+
+================================================================================
+SECTION 5: DEPLOYMENT SCRIPTS
+================================================================================
+
+# Deployment Scripts Overview
+
+## deploy_global_services.sh
+
+**Purpose:** Deploys all global VoiceBM services
+
+**What it does:**
+1. Reads config.json
+2. Extracts all configuration values
+3. Deploys voicebm_config.py first (required by all services)
+4. Renders Python service templates
+5. Renders shell script templates
+6. Renders systemd service templates
+7. Enables and starts all services
+
+**Services Deployed (10):**
+1. voicebm-stt - STT pipeline
+2. voicebm-global-publisher - Global HA device
+3. voicebm-audio-server - Audio HTTP server
+4. voicebm-wav-http - WAV access
+5. voicebm-cluster-publisher - Clustering
+6. voicebm-enrollment-watcher - Person devices
+7. voicebm-commands - MQTT commands
+8. voicebm-retention - Retention
+9. voicebm-vad - VAD filter
+10. voicebm-thing-engine - Identity management
+
+**Usage:**
+```bash
+sudo ./deploy_global_services.sh
+```
+
+**Requirements:**
+- Must be run as root
+- config.json must exist in current directory or /path/to/voicebm/
+- Templates must exist in templates/global/
+
+## replicate_node.sh
+
+**Purpose:** Creates room-specific passive monitoring node
+
+**What it does:**
+1. Validates room exists in config.json
+2. Reads room-specific configuration (RTSP URL, etc.)
+3. Creates recording and embedding directories
+4. Renders room-specific templates
+5. Creates 3 systemd services per room
+6. Enables and starts services
+
+**Services Created (3 per room):**
+1. voicebm-recorder-{room} - RTSP capture
+2. voicebm-embedder-{room} - Sherpa embeddings
+3. voicebm-publisher-{room} - Identity publishing
+
+**Usage:**
+```bash
+sudo ./replicate_node.sh living
+sudo ./replicate_node.sh bedroom
+sudo ./replicate_node.sh kitchen
+```
+
+**Requirements:**
+- Must be run as root
+- Room must be defined in config.json
+- Room must have rtsp_url configured
+- recorder_enabled must be true
+
+
+================================================================================
+SECTION 6: LLM SYSTEM PROMPT CONTRACT
+================================================================================
+
+# VoiceBM LLM System Prompt Contract
+
+When an LLM (like ChatGPT, Claude, etc.) is interfacing with VoiceBM or helping users configure/troubleshoot it, the following principles should be followed:
+
+## Core Principles
+
+1. **Architecture Awareness**
+   - VoiceBM uses Sherpa-ONNX for speaker embeddings (not WeSpeaker)
+   - Performance is ~70ms per embedding (60-162x faster than WeSpeaker)
+   - System is CPU-only, no GPU required
+
+2. **Component Isolation**
+   - Conda environment: 'vb' (Python 3.9)
+   - Docker container: Wyoming ONNX ASR (optional)
+   - System services: Systemd coordination
+
+3. **Configuration Management**
+   - All config in config.json
+   - All services use voicebm_config.py
+   - No hardcoded credentials in templates
+   - Path-agnostic with {PLACEHOLDERS}
+
+4. **Service Structure**
+   - 10 global services
+   - 3 services per room (passive nodes)
+   - Optional dashboard service
+   - All coordinated via voicebm.target
+
+## Key Capabilities
+
+**Thing Engine Operations:**
+- Transform: Change display names
+- Replace: Swap identity labels
+- Merge: Combine identities
+- Alias: Alternative names
+
+**Enrollment Methods:**
+- Web dashboard (http://ip:5000)
+- MQTT pending_active buffer
+- Background clustering
+
+**MQTT Topics:**
+- Control: voicebm/inject_identity, voicebm/blocklist/{person_id}
+- Status: voicebm/{room}/identity, voicebm/{room}/confidence
+- Thing Engine: voicebm/thing_engine/command
+
+## Troubleshooting Guidance
+
+**Services won't start:**
+- Check: journalctl -u voicebm-stt.service
+- Common: Wrong MQTT credentials, missing voicebm_config.py
+
+**No embeddings:**
+- Check: Sherpa model path, sherpa_embed.py executable
+- Test: Run sherpa_embed.py manually
+
+**HA entities missing:**
+- Check: MQTT discovery enabled, enrollment_watcher running
+- Verify: mosquitto_sub -t 'homeassistant/#' -v
+
+## Version-Specific Guidance
+
+**v1.0 Changes:**
+- WeSpeaker → Sherpa-ONNX (always mention this is v1.0)
+- New Thing Engine (identity management)
+- New Dashboard (Flask UI)
+- New Global Publisher (unified HA device)
+- Pre-flight checks in installer
+- ONNX ASR language choice
+
+**Do NOT suggest:**
+- WeSpeaker installation (deprecated)
+- PyTorch dependencies (not needed)
+- voice_enrollment_api.py (removed)
+- Hardcoded paths in templates
+
+**ALWAYS suggest:**
+- Using voicebm_config.py
+- Checking config.json first
+- Using Sherpa-ONNX
+- Path-agnostic deployment
+
+================================================================================
+END OF DOCUMENT
+================================================================================
+
+VoiceBM v1.0 - Complete Setup and Installation Guide
+Generated: December 17, 2025
+For questions or issues, check journalctl logs and MQTT messages.
