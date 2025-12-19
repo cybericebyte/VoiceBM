@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VoiceBM - LLM Voice Biometrics</title>
-    <meta name="description" content="Local voice biometrics for Home Assistant. 60-162x faster speaker identification with Sherpa-ONNX. Intelligence over convenience.">
+    <title>Chat with Claude - VoiceBM Support</title>
     <style>
         * {
             margin: 0;
@@ -12,159 +11,119 @@
             box-sizing: border-box;
         }
 
-        :root {
-            --bg-primary: #0a0a0a;
-            --bg-secondary: #1a1a1a;
-            --gradient-start: #7c3aed;
-            --gradient-end: #3b82f6;
-            --accent-cyan: #06b6d4;
-            --accent-green: #10b981;
-            --text-primary: #ffffff;
-            --text-secondary: #a0a0a0;
-        }
-
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-primary);
+            background: #0a0a0a;
+            color: #ffffff;
             line-height: 1.6;
-            overflow-x: hidden;
-        }
-
-        .gradient-bg {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(135deg, var(--gradient-start) 0%, var(--gradient-end) 100%);
-            opacity: 0.05;
-            z-index: -1;
-            animation: gradientShift 15s ease infinite;
-        }
-
-        @keyframes gradientShift {
-            0%, 100% { transform: scale(1) rotate(0deg); }
-            50% { transform: scale(1.2) rotate(180deg); }
-        }
-
-        header {
             padding: 2rem;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
         }
 
-        .nav-links {
-            display: flex;
-            justify-content: center;
-            gap: 2rem;
-            margin-bottom: 1rem;
-        }
-
-        .nav-links a {
-            color: var(--text-secondary);
-            text-decoration: none;
-            transition: color 0.3s;
-            font-size: 0.9rem;
-        }
-
-        .nav-links a:hover {
-            color: var(--accent-cyan);
-        }
-
-        .hero {
-            padding: 6rem 2rem;
-            text-align: center;
-            position: relative;
-        }
-
-        .hero-content {
+        .container {
             max-width: 900px;
             margin: 0 auto;
-            position: relative;
-            z-index: 1;
         }
 
-        .mic-icon {
-            width: 100px;
-            height: 100px;
-            margin: 0 auto 2rem;
-            position: relative;
-            animation: pulse 3s ease-in-out infinite;
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+            padding-bottom: 2rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         }
 
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.1); opacity: 0.8; }
-        }
-
-        .mic-icon svg {
-            width: 100%;
-            height: 100%;
-            filter: drop-shadow(0 0 20px var(--gradient-start));
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1.5rem;
         }
 
         h1 {
-            font-size: 4rem;
-            font-weight: 800;
-            margin-bottom: 1rem;
-            background: linear-gradient(135deg, var(--gradient-start), var(--accent-cyan));
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, #7c3aed, #06b6d4);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            animation: fadeInUp 1s ease;
-        }
-
-        .tagline {
-            font-size: 1.5rem;
-            color: var(--text-secondary);
-            margin-bottom: 1rem;
-            animation: fadeInUp 1s ease 0.2s both;
+            margin-bottom: 0.5rem;
         }
 
         .subtitle {
-            font-size: 1rem;
-            color: var(--text-secondary);
-            margin-bottom: 3rem;
-            animation: fadeInUp 1s ease 0.4s both;
+            color: #a0a0a0;
+            font-size: 1.1rem;
         }
 
-        @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+        .step {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 2rem;
         }
 
-        .cta-buttons {
-            display: flex;
-            gap: 1.5rem;
-            justify-content: center;
-            flex-wrap: wrap;
-            animation: fadeInUp 1s ease 0.6s both;
+        .step-number {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #7c3aed, #3b82f6);
+            border-radius: 50%;
+            text-align: center;
+            line-height: 40px;
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .step h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: #06b6d4;
+        }
+
+        .step p {
+            color: #a0a0a0;
+            margin-bottom: 1rem;
+        }
+
+        .doc-links {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+        }
+
+        .doc-link {
+            display: block;
+            color: #06b6d4;
+            text-decoration: none;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            background: rgba(6, 182, 212, 0.1);
+            border-radius: 8px;
+            transition: all 0.3s;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+        }
+
+        .doc-link:hover {
+            background: rgba(6, 182, 212, 0.2);
+            transform: translateX(5px);
         }
 
         .btn {
-            padding: 1rem 2.5rem;
+            display: inline-block;
+            padding: 1rem 2rem;
             font-size: 1.1rem;
             font-weight: 600;
             border: none;
             border-radius: 12px;
             cursor: pointer;
             text-decoration: none;
-            display: inline-block;
             transition: all 0.3s;
-            position: relative;
-            overflow: hidden;
+            margin: 0.5rem;
         }
 
         .btn-primary {
-            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+            background: linear-gradient(135deg, #7c3aed, #3b82f6);
             color: white;
         }
 
@@ -177,370 +136,86 @@
             background: rgba(255, 255, 255, 0.05);
             border: 2px solid rgba(255, 255, 255, 0.1);
             color: white;
-            backdrop-filter: blur(10px);
         }
 
         .btn-secondary:hover {
             background: rgba(255, 255, 255, 0.1);
-            border-color: var(--accent-cyan);
+            border-color: #06b6d4;
         }
 
-        .stats {
-            padding: 4rem 2rem;
-            background: rgba(255, 255, 255, 0.02);
-            border-top: 1px solid rgba(255, 255, 255, 0.05);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 3rem;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        .stat {
-            text-align: center;
-        }
-
-        .stat-number {
-            font-size: 3rem;
-            font-weight: 800;
-            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 0.5rem;
-        }
-
-        .stat-label {
-            color: var(--text-secondary);
-            font-size: 1rem;
-        }
-
-        .features {
-            padding: 6rem 2rem;
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-
-        .section-title {
-            text-align: center;
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin-bottom: 1rem;
-            background: linear-gradient(135deg, var(--gradient-start), var(--accent-cyan));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .section-subtitle {
-            text-align: center;
-            color: var(--text-secondary);
-            font-size: 1.2rem;
-            margin-bottom: 4rem;
-        }
-
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 2rem;
-        }
-
-        .feature-card {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 16px;
-            padding: 2.5rem;
-            backdrop-filter: blur(10px);
-            transition: all 0.3s;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .feature-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 4px;
-            background: linear-gradient(90deg, var(--gradient-start), var(--accent-cyan));
-            transform: scaleX(0);
-            transition: transform 0.3s;
-        }
-
-        .feature-card:hover {
-            transform: translateY(-5px);
-            border-color: var(--accent-cyan);
-            box-shadow: 0 10px 40px rgba(6, 182, 212, 0.2);
-        }
-
-        .feature-card:hover::before {
-            transform: scaleX(1);
-        }
-
-        .feature-icon {
-            font-size: 2.5rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .feature-title {
-            font-size: 1.5rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-            color: var(--accent-cyan);
-        }
-
-        .feature-description {
-            color: var(--text-secondary);
-            line-height: 1.8;
-        }
-
-        .screenshots {
-            padding: 6rem 2rem;
-            background: rgba(255, 255, 255, 0.02);
-        }
-
-        .screenshots-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            gap: 2rem;
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-
-        .screenshot-card {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 16px;
-            padding: 1.5rem;
-            transition: all 0.3s;
-        }
-
-        .screenshot-card:hover {
-            transform: translateY(-5px);
-            border-color: var(--gradient-start);
-        }
-
-        .screenshot-card img {
-            width: 100%;
-            border-radius: 8px;
-            margin-bottom: 1rem;
-        }
-
-        .screenshot-title {
-            font-size: 1.2rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-        }
-
-        .screenshot-description {
-            color: var(--text-secondary);
-            font-size: 0.9rem;
-        }
-
-        .quick-start {
-            padding: 6rem 2rem;
-            max-width: 900px;
-            margin: 0 auto;
-        }
-
-        .install-steps {
-            margin-top: 3rem;
-        }
-
-        .step {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 16px;
-            padding: 2rem;
-            margin-bottom: 2rem;
-            position: relative;
-            padding-left: 5rem;
-        }
-
-        .step-number {
-            position: absolute;
-            left: 2rem;
-            top: 2rem;
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.5rem;
-            font-weight: 700;
-        }
-
-        .step-title {
-            font-size: 1.3rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-            color: var(--accent-cyan);
-        }
-
-        .code-block {
+        .prompt-box {
             background: rgba(0, 0, 0, 0.4);
             border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 8px;
+            border-radius: 12px;
             padding: 1.5rem;
-            margin-top: 1rem;
-            overflow-x: auto;
+            margin: 1rem 0;
             font-family: 'Courier New', monospace;
             font-size: 0.9rem;
-            color: var(--accent-green);
+            color: #10b981;
+            white-space: pre-wrap;
+            position: relative;
         }
 
-        .download {
-            padding: 6rem 2rem;
-            text-align: center;
-            background: linear-gradient(135deg, rgba(124, 58, 237, 0.1), rgba(59, 130, 246, 0.1));
-        }
-
-        .download-card {
-            max-width: 600px;
-            margin: 3rem auto 0;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 20px;
-            padding: 3rem;
-            backdrop-filter: blur(10px);
-        }
-
-        .version {
-            display: inline-block;
-            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
-            color: white;
-            padding: 0.5rem 1.5rem;
-            border-radius: 20px;
-            font-weight: 600;
-            margin-bottom: 2rem;
-        }
-
-        .file-info {
-            color: var(--text-secondary);
+        .copy-btn {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: rgba(6, 182, 212, 0.2);
+            border: 1px solid #06b6d4;
+            color: #06b6d4;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
             font-size: 0.9rem;
-            margin-top: 1rem;
+            transition: all 0.3s;
         }
 
-        footer {
-            padding: 4rem 2rem 2rem;
-            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        .copy-btn:hover {
+            background: rgba(6, 182, 212, 0.3);
+        }
+
+        .copy-btn.copied {
+            background: rgba(16, 185, 129, 0.2);
+            border-color: #10b981;
+            color: #10b981;
+        }
+
+        .action-buttons {
             text-align: center;
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
         }
 
-        .credits {
-            max-width: 800px;
-            margin: 0 auto 2rem;
-            color: var(--text-secondary);
-            line-height: 1.8;
+        .note {
+            background: rgba(124, 58, 237, 0.1);
+            border-left: 4px solid #7c3aed;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 8px;
         }
 
-        .credits strong {
-            color: var(--accent-cyan);
-        }
-
-        .footer-links {
-            display: flex;
-            justify-content: center;
-            gap: 2rem;
-            margin-bottom: 2rem;
-            flex-wrap: wrap;
-        }
-
-        .footer-links a {
-            color: var(--text-secondary);
-            text-decoration: none;
-            transition: color 0.3s;
-        }
-
-        .footer-links a:hover {
-            color: var(--accent-cyan);
-        }
-
-        .copyright {
-            color: rgba(255, 255, 255, 0.3);
-            font-size: 0.9rem;
+        .note strong {
+            color: #06b6d4;
         }
 
         @media (max-width: 768px) {
             h1 {
-                font-size: 2.5rem;
-            }
-
-            .tagline {
-                font-size: 1.2rem;
-            }
-
-            .cta-buttons {
-                flex-direction: column;
-            }
-
-            .btn {
-                width: 100%;
-            }
-
-            .stat-number {
                 font-size: 2rem;
             }
-
-            .features-grid,
-            .screenshots-grid {
-                grid-template-columns: 1fr;
-            }
-
+            
             .step {
-                padding-left: 2rem;
+                padding: 1.5rem;
             }
-
-            .step-number {
-                position: relative;
-                left: 0;
-                top: 0;
-                margin-bottom: 1rem;
-            }
-        }
-
-        .fade-in {
-            opacity: 0;
-            transform: translateY(30px);
-            transition: opacity 0.6s, transform 0.6s;
-        }
-
-        .fade-in.visible {
-            opacity: 1;
-            transform: translateY(0);
         }
     </style>
 </head>
 <body>
-    <div class="gradient-bg"></div>
-
-    <header>
-        <nav class="nav-links">
-            <a href="#features">Features</a>
-            <a href="#screenshots">Screenshots</a>
-            <a href="#quickstart">Quick Start</a>
-            <a href="#download">Download</a>
-            <a href="https://chatgpt.com/g/g-68e55ecea6888191bb871536408fa73b-home-assistant-voicebm-voice-biometrics" target="_blank">GPT Assistant</a>
-            <a href="https://github.com/cybericebyte/VoiceBM">GitHub</a>
-        </nav>
-    </header>
-
-    <section class="hero">
-        <div class="hero-content">
-            <div class="mic-icon">
+    <div class="container">
+        <div class="header">
+            <div class="logo">
                 <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M12 1C10.34 1 9 2.34 9 4V12C9 13.66 10.34 15 12 15C13.66 15 15 13.66 15 12V4C15 2.34 13.66 1 12 1Z" fill="url(#grad1)"/>
-                    <path d="M17 11C17 14.31 14.31 17 11 17H13C16.31 17 19 14.31 19 11H17Z" fill="url(#grad1)"/>
-                    <path d="M7 11C7 14.31 9.69 17 13 17H11C7.69 17 5 14.31 5 11H7Z" fill="url(#grad1)"/>
-                    <path d="M12 19V23" stroke="url(#grad1)" stroke-width="2" stroke-linecap="round"/>
-                    <path d="M8 23H16" stroke="url(#grad1)" stroke-width="2" stroke-linecap="round"/>
                     <defs>
                         <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
                             <stop offset="0%" style="stop-color:#7c3aed;stop-opacity:1" />
@@ -549,224 +224,84 @@
                     </defs>
                 </svg>
             </div>
-            <h1>VoiceBM</h1>
-            <p class="tagline">LLM Voice Biometrics for Home Assistant</p>
-            <p class="subtitle">Local speaker identification. Zero cloud. Intelligence over convenience.</p>
-            <div class="cta-buttons">
-                <a href="https://github.com/cybericebyte/VoiceBM/releases/latest" target="_blank" class="btn btn-primary">Download v1.0</a>
-                <a href="https://github.com/cybericebyte/VoiceBM" target="_blank" class="btn btn-secondary">View on GitHub</a>
-            </div>
-        </div>
-    </section>
-
-    <section class="stats">
-        <div class="stats-grid">
-            <div class="stat">
-                <div class="stat-number">60-162x</div>
-                <div class="stat-label">Faster than WeSpeaker</div>
-            </div>
-            <div class="stat">
-                <div class="stat-number">&lt;100ms</div>
-                <div class="stat-label">Embedding Generation</div>
-            </div>
-            <div class="stat">
-                <div class="stat-number">100%</div>
-                <div class="stat-label">Local Processing</div>
-            </div>
-            <div class="stat">
-                <div class="stat-number">Multi-Room</div>
-                <div class="stat-label">Passive Monitoring</div>
-            </div>
-        </div>
-    </section>
-
-    <section id="features" class="features">
-        <h2 class="section-title">Built for Intelligence</h2>
-        <p class="section-subtitle">Next-generation voice biometrics powered by Sherpa-ONNX</p>
-        
-        <div class="features-grid">
-            <div class="feature-card fade-in">
-                <div class="feature-icon">⚡</div>
-                <h3 class="feature-title">Sherpa-ONNX Speed</h3>
-                <p class="feature-description">Lightning-fast speaker recognition with neural network embeddings. Generate embeddings in under 100ms—60-162x faster than WeSpeaker.</p>
-            </div>
-
-            <div class="feature-card fade-in">
-                <div class="feature-icon">🎯</div>
-                <h3 class="feature-title">Thing Engine</h3>
-                <p class="feature-description">Sophisticated identity management with transform, merge, and alias operations. Handle complex family dynamics and voice variations seamlessly.</p>
-            </div>
-
-            <div class="feature-card fade-in">
-                <div class="feature-icon">🏠</div>
-                <h3 class="feature-title">Multi-Room Deployment</h3>
-                <p class="feature-description">Deploy passive nodes per room with RTSP audio capture. Identify speakers across your entire home with room-specific confidence scoring.</p>
-            </div>
-
-            <div class="feature-card fade-in">
-                <div class="feature-icon">🔒</div>
-                <h3 class="feature-title">Privacy First</h3>
-                <p class="feature-description">100% local processing. No cloud dependencies. Your voice data never leaves your network. Full control over enrollment and blocklists.</p>
-            </div>
-
-            <div class="feature-card fade-in">
-                <div class="feature-icon">🤖</div>
-                <h3 class="feature-title">LLM Integration</h3>
-                <p class="feature-description">Seamless integration with conversation.process and STT pipelines. Speaker tags appear naturally in transcripts for context-aware AI responses.</p>
-            </div>
-
-            <div class="feature-card fade-in">
-                <div class="feature-icon">📊</div>
-                <h3 class="feature-title">Home Assistant Native</h3>
-                <p class="feature-description">Full MQTT discovery. Per-person devices with blocklist controls. Global and per-room confidence sensors. Dashboard-ready enrollment interface.</p>
-            </div>
-        </div>
-    </section>
-
-    <section id="screenshots" class="screenshots">
-        <h2 class="section-title">See It In Action</h2>
-        <p class="section-subtitle">Beautiful Home Assistant integration</p>
-        
-        <div class="screenshots-grid">
-            <div class="screenshot-card fade-in">
-                <div style="background: linear-gradient(135deg, #7c3aed, #3b82f6); height: 200px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 1.5rem; margin-bottom: 1rem;">
-                    Dashboard UI
-                </div>
-                <h3 class="screenshot-title">Flask Dashboard</h3>
-                <p class="screenshot-description">Web-based enrollment interface with real-time active pipeline monitoring and blocklist management.</p>
-            </div>
-
-            <div class="screenshot-card fade-in">
-                <div style="background: linear-gradient(135deg, #06b6d4, #10b981); height: 200px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 1.5rem; margin-bottom: 1rem;">
-                    HA Integration
-                </div>
-                <h3 class="screenshot-title">Home Assistant Devices</h3>
-                <p class="screenshot-description">Per-person and per-room devices with confidence sensors, voice detection, and threshold controls.</p>
-            </div>
-
-            <div class="screenshot-card fade-in">
-                <div style="background: linear-gradient(135deg, #10b981, #7c3aed); height: 200px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 1.5rem; margin-bottom: 1rem;">
-                    Live Detection
-                </div>
-                <h3 class="screenshot-title">Real-Time Monitoring</h3>
-                <p class="screenshot-description">Watch speaker identification happen in real-time across multiple rooms with confidence scoring.</p>
-            </div>
-        </div>
-    </section>
-
-    <section id="quickstart" class="quick-start">
-        <h2 class="section-title">Three Steps to Deploy</h2>
-        <p class="section-subtitle">Get VoiceBM running in under 10 minutes</p>
-
-        <div class="install-steps">
-            <div class="step fade-in">
-                <div class="step-number">1</div>
-                <h3 class="step-title">Extract & Setup</h3>
-                <p>Run the automated installer wizard to configure your environment.</p>
-                <div class="code-block">tar -xzf VoiceBM_v1.0_Complete.tar.gz<br>cd VoiceBM_v1.0_Complete<br>./setup_voicebm.sh</div>
-            </div>
-
-            <div class="step fade-in">
-                <div class="step-number">2</div>
-                <h3 class="step-title">Deploy Global Services</h3>
-                <p>Install the 10 global services and start the core system.</p>
-                <div class="code-block">sudo cp config.json /home/user/voicebm/<br>cd scripts<br>sudo ./deploy_global_services.sh</div>
-            </div>
-
-            <div class="step fade-in">
-                <div class="step-number">3</div>
-                <h3 class="step-title">Add Rooms</h3>
-                <p>Deploy passive nodes for each room you want to monitor.</p>
-                <div class="code-block">sudo ./replicate_node.sh living<br>sudo ./replicate_node.sh bedroom</div>
-            </div>
-        </div>
-    </section>
-
-    <section id="download" class="download">
-        <h2 class="section-title">Ready to Deploy?</h2>
-        <p class="section-subtitle">Download the complete package and get started</p>
-
-        <div class="download-card fade-in">
-            <span class="version">v1.0 - Sherpa Edition</span>
-            <h3 style="font-size: 1.5rem; margin-bottom: 1.5rem;">VoiceBM Complete Package</h3>
-            <a href="https://github.com/cybericebyte/VoiceBM/releases/latest" target="_blank" class="btn btn-primary" style="width: 100%;">Download VoiceBM_v1.0_Complete.tar.gz</a>
-            <p class="file-info">
-                Size: 154KB | SHA256: 83db672d0761eee6100f7d3c8f569df99b540277925f73e4c42c9381d537de74
-            </p>
-            <p class="file-info" style="margin-top: 1.5rem;">
-                <strong>Includes:</strong> All templates, deployment scripts, documentation, and setup wizard
-            </p>
-        </div>
-    </section>
-
-    <section class="features" style="background: rgba(255, 255, 255, 0.02);">
-        <h2 class="section-title">Get Help from AI</h2>
-        <p class="section-subtitle">Choose your AI assistant for VoiceBM support</p>
-        
-        <div class="features-grid" style="max-width: 900px; margin: 0 auto; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));">
-            <div class="feature-card fade-in">
-                <div class="feature-icon">🤖</div>
-                <h3 class="feature-title">ChatGPT Assistant</h3>
-                <p class="feature-description">Custom GPT trained specifically on VoiceBM documentation. Ideal for troubleshooting, configuration help, and understanding system architecture.</p>
-                <a href="https://chatgpt.com/g/g-68e55ecea6888191bb871536408fa73b-home-assistant-voicebm-voice-biometrics" target="_blank" class="btn btn-secondary" style="width: 100%; margin-top: 1.5rem;">Chat with GPT</a>
-            </div>
-
-            <div class="feature-card fade-in">
-                <div class="feature-icon">🧠</div>
-                <h3 class="feature-title">Claude (Anthropic)</h3>
-                <p class="feature-description">Co-architect of VoiceBM. Deep understanding of the system's design philosophy and implementation. Great for advanced customization and architecture questions.</p>
-                <a href="https://claude.ai" target="_blank" class="btn btn-secondary" style="width: 100%; margin-top: 1.5rem;">Chat with Claude</a>
-            </div>
-        </div>
-        
-        <p style="text-align: center; color: var(--text-secondary); margin-top: 3rem; max-width: 700px; margin-left: auto; margin-right: auto;">
-            Both assistants have complete knowledge of VoiceBM v1.0. Pick whichever you prefer—or try both!
-        </p>
-    </section>
-
-    <footer>
-        <div class="credits">
-            <p><strong>VoiceBM</strong> was developed collaboratively by David M. Dryver Sr. with significant contributions from <strong>Anthropic's Claude</strong> and <strong>OpenAI's GPT</strong>.</p>
-            <p>This project represents the convergence of human ingenuity and AI capabilities—a testament to what's possible when we build together.</p>
-            <p style="margin-top: 1.5rem;">Need help? Both <a href="https://chatgpt.com/g/g-68e55ecea6888191bb871536408fa73b-home-assistant-voicebm-voice-biometrics" target="_blank" style="color: var(--accent-cyan); text-decoration: none;">ChatGPT</a> and <a href="https://claude.ai" target="_blank" style="color: var(--accent-cyan); text-decoration: none;">Claude</a> have complete knowledge of VoiceBM and can assist you.</p>
-            <p style="margin-top: 1.5rem; font-style: italic;">"Intelligence over convenience."</p>
+            <h1>Chat with Claude</h1>
+            <p class="subtitle">VoiceBM Support - Quick Setup in 3 Steps</p>
         </div>
 
-        <div class="footer-links">
-            <a href="https://github.com/cybericebyte/VoiceBM">GitHub Repository</a>
-            <a href="https://github.com/cybericebyte/VoiceBM/issues">Report Issues</a>
-            <a href="https://chatgpt.com/g/g-68e55ecea6888191bb871536408fa73b-home-assistant-voicebm-voice-biometrics" target="_blank">GPT Assistant</a>
-            <a href="https://claude.ai">Claude Support</a>
+        <div class="step">
+            <div class="step-number">1</div>
+            <h2>Copy the Documentation Links</h2>
+            <p>These are the essential VoiceBM documentation files. Click the button to copy all links to your clipboard:</p>
+            
+            <div class="doc-links">
+                <a href="https://raw.githubusercontent.com/cybericebyte/VoiceBM/main/QUICKSTART.md" target="_blank" class="doc-link">📄 QUICKSTART.md</a>
+                <a href="https://raw.githubusercontent.com/cybericebyte/VoiceBM/main/README.md" target="_blank" class="doc-link">📄 README.md</a>
+                <a href="https://raw.githubusercontent.com/cybericebyte/VoiceBM/main/UNDERSTANDING_VOICEBM.md" target="_blank" class="doc-link">📄 UNDERSTANDING_VOICEBM.md</a>
+            </div>
+
+            <button class="btn btn-secondary" onclick="copyLinks()">📋 Copy All Links</button>
         </div>
 
-        <p class="copyright">© 2025 David M. Dryver Sr. | Open Source | MIT License</p>
-    </footer>
+        <div class="step">
+            <div class="step-number">2</div>
+            <h2>Copy the Starter Prompt</h2>
+            <p>Use this prompt to give Claude full context about VoiceBM:</p>
+            
+            <div class="prompt-box" id="starterPrompt">I'm working with VoiceBM v1.0, a local voice biometrics system for Home Assistant. Please help me with questions about installation, configuration, and troubleshooting.
+
+Here are the key documentation files from the GitHub repo:
+- https://raw.githubusercontent.com/cybericebyte/VoiceBM/main/QUICKSTART.md
+- https://raw.githubusercontent.com/cybericebyte/VoiceBM/main/README.md
+- https://raw.githubusercontent.com/cybericebyte/VoiceBM/main/UNDERSTANDING_VOICEBM.md
+
+Can you help me with VoiceBM?<button class="copy-btn" onclick="copyPrompt()">Copy</button></div>
+        </div>
+
+        <div class="step">
+            <div class="step-number">3</div>
+            <h2>Open Claude & Start Chatting</h2>
+            <p>Click the button below to open Claude.ai. Then paste the prompt above and start asking questions!</p>
+            
+            <div class="note">
+                <strong>💡 Pro Tip:</strong> Claude can fetch those GitHub links directly and will have full context about VoiceBM's architecture, installation, and troubleshooting.
+            </div>
+        </div>
+
+        <div class="action-buttons">
+            <a href="https://claude.ai" target="_blank" class="btn btn-primary">💬 Open Claude.ai Now</a>
+            <a href="https://cybericebyte.github.io/VoiceBM/" class="btn btn-secondary">← Back to VoiceBM</a>
+        </div>
+    </div>
 
     <script>
-        const observerOptions = {
-            threshold: 0.1,
-            rootMargin: '0px 0px -50px 0px'
-        };
-
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    entry.target.classList.add('visible');
-                }
+        function copyLinks() {
+            const links = `https://raw.githubusercontent.com/cybericebyte/VoiceBM/main/QUICKSTART.md
+https://raw.githubusercontent.com/cybericebyte/VoiceBM/main/README.md
+https://raw.githubusercontent.com/cybericebyte/VoiceBM/main/UNDERSTANDING_VOICEBM.md`;
+            
+            navigator.clipboard.writeText(links).then(() => {
+                const btn = event.target;
+                btn.textContent = '✅ Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = '📋 Copy All Links';
+                    btn.classList.remove('copied');
+                }, 2000);
             });
-        }, observerOptions);
+        }
 
-        document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
-
-        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-            anchor.addEventListener('click', function (e) {
-                e.preventDefault();
-                const target = document.querySelector(this.getAttribute('href'));
-                if (target) {
-                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }
+        function copyPrompt() {
+            const prompt = document.getElementById('starterPrompt').textContent;
+            navigator.clipboard.writeText(prompt).then(() => {
+                const btn = event.target;
+                btn.textContent = '✅ Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = 'Copy';
+                    btn.classList.remove('copied');
+                }, 2000);
             });
-        });
+        }
     </script>
 </body>
 </html>
