@@ -1,5 +1,7 @@
 # VoiceBM
 
+"Voice BM is not a replacement for anything. It is an enhancement to fill a hole that exists within the local smart AI consumer communities. I built it and shared it so you didn't have to."
+
 VoiceBM is a voice biometrics engine for Home Assistant. It identifies who is speaking, publishes identity signals via MQTT, and supports enrollment + blocklisting workflows.
 
 > Scope note: VoiceBM is an engine. It exposes identity and controls; your UI/LLM/frontend decides how to use them.
