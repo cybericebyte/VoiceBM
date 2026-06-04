@@ -132,7 +132,6 @@ Devices & Services → MQTT.
 ## Upgrading from v1.0.x
 
 ```bash
-cd scripts
 sudo ./upgrade_v1_to_v2.sh
 ```
 
