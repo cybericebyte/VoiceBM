@@ -1,6 +1,6 @@
-# VoiceBM v1.0 Complete Setup and Installation Guide
+# VoiceBM v2.0 Complete Setup and Installation Guide
 # Consolidated Documentation for LLM Consumption
-# Generated: December 17, 2025
+# Generated: June 4th, 2026
 
 This document combines all setup, installation, configuration, and operational
 documentation for VoiceBM v1.0 into a single comprehensive reference.
@@ -111,7 +111,6 @@ After setup completes:
 sudo cp config.json /path/to/voicebm/
 
 # Deploy global services
-cd scripts
 sudo ./deploy_global_services.sh
 ```
 
@@ -1098,6 +1097,6 @@ When an LLM (like ChatGPT, Claude, etc.) is interfacing with VoiceBM or helping 
 END OF DOCUMENT
 ================================================================================
 
-VoiceBM v1.0 - Complete Setup and Installation Guide
-Generated: December 17, 2025
+VoiceBM v2.0 - Complete Setup and Installation Guide
+Generated: June 4th, 2026
 For questions or issues, check journalctl logs and MQTT messages.
