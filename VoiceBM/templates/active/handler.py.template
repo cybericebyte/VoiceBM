@@ -1,0 +1,606 @@
+"""Event handler for clients of the server with Voice Biometrics integration via MQTT.
+
+ACTIVE PIPELINE SCRIPT - Docker container component
+This runs inside the ONNX ASR Docker container
+
+CRITICAL FLOW ORDER:
+1. Audio comes in
+2. Voice biometrics analysis FIRST (identify speaker from gallery)
+3. Fire binary sensor (ALWAYS, regardless of blocklist)
+4. Update active_speaker text sensors with the gate verdict (current_speaker belongs to the STT service)
+5. STT runs ALWAYS (for debug feed)
+6. Publish raw to voicebm/transcript/debug
+7. Gate-check: if blocked, preferred/request line = ""; else = modified_text
+8. Publish gate-checked text to voicebm/transcript/preferred and send to Wyoming
+
+Deploy via:
+  sudo docker cp /home/user/onnx-asr-addon/onnx-asr/handler.py asr_container:/app/wyoming_onnx_asr/handler.py
+  sudo docker restart asr_container
+"""
+
+import asyncio
+import logging
+import threading
+import os
+import tempfile
+import wave
+import json
+import time
+import uuid
+import shutil
+from pathlib import Path
+
+from typing import Optional
+import numpy as np
+import soundfile as sf
+from onnx_asr.adapters import AsrAdapter
+from wyoming.asr import Transcribe, Transcript
+from wyoming.audio import AudioChunk, AudioStop
+from wyoming.event import Event
+from wyoming.info import Describe, Info
+from wyoming.server import AsyncEventHandler
+import paho.mqtt.client as mqtt
+
+_LOGGER = logging.getLogger(__name__)
+
+# Voice biometrics configuration
+# MQTT Configuration (from environment variables for Docker)
+
+MQTT_BROKER = os.getenv('MQTT_BROKER', '@@MQTT_BROKER@@')
+MQTT_PORT = int(os.getenv('MQTT_PORT', '@@MQTT_PORT@@'))
+MQTT_USER = os.getenv('MQTT_USER', '@@MQTT_USER@@')
+MQTT_PASS = os.getenv('MQTT_PASS', '@@MQTT_PASS@@')
+SHARED_AUDIO_DIR = "/opt/voicebm/stt_requests"
+VB_REQUEST_TOPIC = "voicebm/stt/analyze_request"
+VB_RESPONSE_TOPIC = "voicebm/stt/analyze_response"
+ANALYSIS_TIMEOUT = 20  # seconds to wait for voice biometrics response
+
+# Active Biopsy / Pre-processing settings
+BIOPSY_LEAD_SKIP_MS = int(os.getenv("VB_BIOPSY_LEAD_SKIP_MS", "500"))
+BIOPSY_SECONDS = float(os.getenv("VB_BIOPSY_SECONDS", "2.0"))
+
+
+# ── THE RADIO TRANSMITTER ────────────────────────────────────────────────────
+# ONE persistent MQTT client for the whole container, built once, never torn
+# down. Broadcasts are fire-and-forget: publish() and move on — the client's
+# own loop thread handles transmission. The handler never waits for a
+# delivery receipt. The transmitter carries the two always-on subscriptions:
+#   voicebm/inject_identity            — injection toggle (local fallback)
+#   voicebm/stt/analyze_response/#     — verdict mailbox for the gate
+_MQTT_LOCK = threading.Lock()
+_MQTT_TX = None
+_INJECT_STATE = {"enabled": True, "initialized": False}
+# Transcript-preferred gate. Peer of _INJECT_STATE. When disabled, the
+# voicebm/transcript/preferred publish is suppressed (debug topic is never gated).
+# config.json is the source of truth; the publisher echoes retained state here.
+_PREFERRED_STATE = {"enabled": True, "initialized": False}
+
+# Verdict mailbox — the biopsy verdict for a request_id lands here WHILE the
+# user is still speaking (parallel preprocessing); the gate at AudioStop just
+# reads it. KEEP-FIRST: the first verdict for an id stands — the biopsy IS
+# the active speaker; the later full-audio response never overwrites it.
+_VB_VERDICTS = {}
+_VB_VERDICTS_LOCK = threading.Lock()
+_VB_VERDICT_TTL = 60  # seconds
+
+
+def _cache_verdict(request_id, payload):
+    now = time.time()
+    with _VB_VERDICTS_LOCK:
+        for rid in [r for r, v in _VB_VERDICTS.items() if now - v.get("_ts", 0) > _VB_VERDICT_TTL]:
+            _VB_VERDICTS.pop(rid, None)
+        if request_id not in _VB_VERDICTS:  # keep-first
+            payload["_ts"] = now
+            _VB_VERDICTS[request_id] = payload
+
+
+def _get_verdict(request_id):
+    with _VB_VERDICTS_LOCK:
+        return _VB_VERDICTS.get(request_id)
+
+
+def _get_mqtt():
+    """Return the container's one persistent MQTT client (create on first use)."""
+    global _MQTT_TX
+    with _MQTT_LOCK:
+        if _MQTT_TX is not None:
+            return _MQTT_TX
+
+        def on_connect(client, userdata, flags, reason_code, properties):
+            if reason_code == 0:
+                if not _INJECT_STATE["initialized"]:
+                    _LOGGER.info("Transmitter MQTT connected")
+                client.subscribe("voicebm/inject_identity", qos=1)
+                client.subscribe("voicebm/transcript_preferred", qos=1)
+                client.subscribe(f"{VB_RESPONSE_TOPIC}/#", qos=1)
+
+        def on_message(client, userdata, msg):
+            try:
+                if msg.topic.startswith(VB_RESPONSE_TOPIC + "/"):
+                    request_id = msg.topic.rsplit("/", 1)[1]
+                    payload = json.loads(msg.payload.decode('utf-8'))
+                    _LOGGER.info(f"VB response: {payload}")
+                    _cache_verdict(request_id, payload)
+                    return
+
+                state = msg.payload.decode('utf-8')
+                new_enabled = (state == "ON")
+                if msg.topic == "voicebm/transcript_preferred":
+                    if not _PREFERRED_STATE["initialized"]:
+                        _PREFERRED_STATE["enabled"] = new_enabled
+                        _PREFERRED_STATE["initialized"] = True
+                        _LOGGER.info(f"[SETTING] Initial transcript-preferred state: {state} (enabled={new_enabled})")
+                    elif _PREFERRED_STATE["enabled"] != new_enabled:
+                        _PREFERRED_STATE["enabled"] = new_enabled
+                        _LOGGER.info(f"[SETTING] Transcript-preferred state changed: {state} (enabled={new_enabled})")
+                    return
+
+                if not _INJECT_STATE["initialized"]:
+                    _INJECT_STATE["enabled"] = new_enabled
+                    _INJECT_STATE["initialized"] = True
+                    _LOGGER.info(f"[SETTING] Initial injection state: {state} (enabled={new_enabled})")
+                elif _INJECT_STATE["enabled"] != new_enabled:
+                    _INJECT_STATE["enabled"] = new_enabled
+                    _LOGGER.info(f"[SETTING] Injection state changed: {state} (enabled={new_enabled})")
+            except Exception as e:
+                _LOGGER.error(f"Failed to parse MQTT message on {msg.topic}: {e}")
+
+        def on_disconnect(client, userdata, flags, reason_code, properties):
+            if reason_code != 0:
+                _LOGGER.warning(f"Transmitter MQTT disconnected: rc={reason_code}, will auto-reconnect")
+
+        client = mqtt.Client(
+            client_id="wyoming_vb_state",
+            clean_session=True,
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2
+        )
+        client.username_pw_set(MQTT_USER, MQTT_PASS)
+        client.on_connect = on_connect
+        client.on_message = on_message
+        client.on_disconnect = on_disconnect
+        client.reconnect_delay_set(min_delay=5, max_delay=300)
+        try:
+            client.connect(MQTT_BROKER, MQTT_PORT, keepalive=300)
+        except Exception as e:
+            _LOGGER.error(f"Transmitter connect failed: {e} — will retry in background")
+        client.loop_start()
+
+        _MQTT_TX = client
+        return _MQTT_TX
+
+
+class NemoAsrEventHandler(AsyncEventHandler):
+    """Event handler for clients."""
+
+    def __init__(
+        self,
+        wyoming_info: Info,
+        models: dict[str, AsrAdapter],
+        model_lock: asyncio.Lock,
+        *args,
+        initial_prompt: Optional[str] = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+
+        self.wyoming_info_event = wyoming_info.event()
+        self.models = models
+        self.model_lock = model_lock
+        self.initial_prompt = initial_prompt
+        self.request_language: Optional[str] = None
+        self._wav_dir = tempfile.TemporaryDirectory()
+        self._wav_path = os.path.join(self._wav_dir.name, "speech.wav")
+        self._wav_file: Optional[wave.Wave_write] = None
+        
+        # Create shared directory if it doesn't exist
+        Path(SHARED_AUDIO_DIR).mkdir(parents=True, exist_ok=True)
+        
+        # Injection state + verdict mailbox live on the container transmitter
+        
+        # Streaming early biopsy tracking
+        self._biopsy_sent = False
+        self._biopsy_frames_written = 0
+        self._biopsy_frames_skipped = 0
+        self._biopsy_skip_frames_needed = 0
+        self._current_request_id = None
+        self._biopsy_wav_file: Optional[wave.Wave_write] = None
+        self._biopsy_wav_path: Optional[str] = None
+        self._audio_format = None
+        # Per-utterance bridge-origin flag. Set when a Transcribe event arrives
+        # with the bridge marker in its name field — which the bridge sends BEFORE
+        # any audio, so this is known before the preferred gate evaluates. Per
+        # connection/instance: no MQTT, no race, survives every run.
+        self._is_bridge = False
+        
+        # Ensure the container transmitter is up (created once, shared by all
+        # handler instances — inject toggle and verdict mailbox ride it)
+        _get_mqtt()
+        
+        _LOGGER.info(f"Voice biometrics MQTT integration initialized")
+    
+    @property
+    def inject_identity_enabled(self):
+        """Injection toggle state (local fallback) — lives on the transmitter."""
+        return _INJECT_STATE["enabled"]
+
+    def request_voice_analysis(self, audio_path, request_id=None):
+        """Resolve this utterance's gate verdict (ACTIVE speaker).
+
+        The transmitter's verdict mailbox has been listening since container
+        start, so for any utterance long enough to have a biopsy, the ACTIVE
+        verdict is usually already waiting by AudioStop — the gate just reads
+        it. The full-audio request is always broadcast regardless: that is
+        CURRENT speaker's feed (STT service: trim, full embed, pending,
+        emote, voicebm/current_speaker). The gate only waits when there was
+        no biopsy (short utterance).
+        """
+        request_id = request_id or str(uuid.uuid4())
+        try:
+            request_payload = {
+                "request_id": request_id,
+                "audio_path": audio_path,
+                "timestamp": time.time()
+            }
+            _LOGGER.info(f"Publishing VB request: {request_payload}")
+            _get_mqtt().publish(VB_REQUEST_TOPIC, json.dumps(request_payload), qos=1)
+
+            verdict = _get_verdict(request_id)
+            if verdict is not None:
+                _LOGGER.info("[GATE] Active verdict was already waiting (parallel preprocessing)")
+            else:
+                start_time = time.time()
+                while verdict is None and (time.time() - start_time) < ANALYSIS_TIMEOUT:
+                    time.sleep(0.05)
+                    verdict = _get_verdict(request_id)
+
+            if verdict is not None:
+                return (
+                    verdict.get("speaker_id"),
+                    verdict.get("display_name"),
+                    verdict.get("confidence", 0.0),
+                    verdict.get("inject_enabled", True),
+                    verdict.get("is_blocked", False)
+                )
+            _LOGGER.warning(f"VB analysis timeout after {ANALYSIS_TIMEOUT}s")
+            return None, None, 0.0, True, False
+
+        except Exception as e:
+            _LOGGER.error(f"VB request failed: {e}", exc_info=True)
+            return None, None, 0.0, True, False
+
+    def publish_voice_on(self, person_id):
+        """Publish ON to person's voice binary sensor via MQTT."""
+        try:
+            topic = f"{person_id}/voice"
+            _get_mqtt().publish(topic, "ON", qos=1, retain=False)
+            _LOGGER.info(f"[OK] Binary sensor ON: {topic}")
+            return True
+        except Exception as e:
+            _LOGGER.error(f"Voice sensor MQTT publish failed: {e}")
+            return False
+
+    def publish_active_speaker(self, display_name, speaker_id):
+        """Publish ACTIVE speaker — the biopsy's verdict, who is speaking NOW.
+
+        OWNERSHIP: handler owns ACTIVE speaker. CURRENT speaker (the
+        considered full-utterance verdict) belongs to the STT service,
+        which is the sole writer of voicebm/current_speaker. Handler must
+        never publish current_speaker."""
+        try:
+            tx = _get_mqtt()
+            tx.publish("voicebm/active_speaker", display_name or "user", qos=1, retain=True)
+            tx.publish("voicebm/active_speaker_id", speaker_id or "user", qos=1, retain=True)
+            _LOGGER.info(f"[OK] Active speaker: {display_name or 'user'} / {speaker_id or 'user'}")
+            return True
+        except Exception as e:
+            _LOGGER.error(f"Active speaker publish failed: {e}")
+            return False
+
+    async def handle_event(self, event: Event) -> bool:
+        if AudioChunk.is_type(event.type):
+            chunk = AudioChunk.from_event(event)
+
+            # Initialize full WAV + biopsy on first chunk
+            if self._wav_file is None:
+                # Full WAV for STT
+                self._wav_file = wave.open(self._wav_path, "wb")
+                self._wav_file.setframerate(chunk.rate)
+                self._wav_file.setsampwidth(chunk.width)
+                self._wav_file.setnchannels(chunk.channels)
+                
+                # Store audio format
+                self._audio_format = {
+                    'rate': chunk.rate,
+                    'width': chunk.width,
+                    'channels': chunk.channels
+                }
+                
+                # Generate request ID
+                self._current_request_id = str(uuid.uuid4())
+                
+                # Initialize biopsy tracking with memory skip
+                self._biopsy_sent = False
+                self._biopsy_frames_written = 0
+                self._biopsy_frames_skipped = 0
+                self._biopsy_skip_frames_needed = int((BIOPSY_LEAD_SKIP_MS / 1000.0) * chunk.rate)
+                
+                biopsy_filename = f"stt_{int(time.time() * 1000)}_biopsy.wav"
+                self._biopsy_wav_path = os.path.join(SHARED_AUDIO_DIR, biopsy_filename)
+                self._biopsy_wav_file = wave.open(self._biopsy_wav_path, "wb")
+                self._biopsy_wav_file.setframerate(chunk.rate)
+                self._biopsy_wav_file.setsampwidth(chunk.width)
+                self._biopsy_wav_file.setnchannels(chunk.channels)
+                
+                _LOGGER.info(f"[STREAMING] New utterance, request_id={self._current_request_id}")
+
+            # ALWAYS write to full WAV
+            self._wav_file.writeframes(chunk.audio)
+            
+            # Write to biopsy if still collecting
+            if not self._biopsy_sent and self._biopsy_wav_file is not None:
+                bytes_per_frame = self._audio_format['width'] * self._audio_format['channels']
+                chunk_frames = len(chunk.audio) // bytes_per_frame
+                
+                audio_for_biopsy = chunk.audio
+                frames_for_biopsy = chunk_frames
+
+                # Skip lead-in frames (wake word chime) in memory
+                if self._biopsy_frames_skipped < self._biopsy_skip_frames_needed:
+                    frames_to_skip = min(chunk_frames, self._biopsy_skip_frames_needed - self._biopsy_frames_skipped)
+                    self._biopsy_frames_skipped += frames_to_skip
+                    
+                    if frames_to_skip == chunk_frames:
+                        return True # Entire chunk was part of the skip-delay
+                    
+                    # Slice the audio byte array to remove the skipped frames
+                    bytes_to_skip = frames_to_skip * bytes_per_frame
+                    audio_for_biopsy = chunk.audio[bytes_to_skip:]
+                    frames_for_biopsy = chunk_frames - frames_to_skip
+
+                # Write the remaining frames to the biopsy file
+                slice_frames_needed = int(BIOPSY_SECONDS * self._audio_format['rate'])
+                frames_to_write = min(frames_for_biopsy, slice_frames_needed - self._biopsy_frames_written)
+                
+                if frames_to_write > 0:
+                    bytes_to_write = frames_to_write * bytes_per_frame
+                    self._biopsy_wav_file.writeframes(audio_for_biopsy[:bytes_to_write])
+                    self._biopsy_frames_written += frames_to_write
+                
+                # Check if biopsy is complete
+                if self._biopsy_frames_written >= slice_frames_needed:
+                    self._send_biopsy()
+            
+            return True
+
+        if AudioStop.is_type(event.type):
+            _LOGGER.debug("Audio stopped. Processing with voice biometrics first.")
+            if self._wav_file is None:
+                # Zero-chunk utterance: the stream opened and closed without a
+                # single audio chunk (false wake / instant VAD cancel / the tail
+                # of a reconnect). No audio exists, so no identity and no
+                # transcript — complete the protocol with an empty Transcript
+                # and keep the connection alive.
+                _LOGGER.warning("AudioStop with no audio chunks — empty utterance, completing with empty transcript")
+                await self.write_event(Transcript(text="").event())
+                return False
+
+            self._wav_file.close()
+            self._wav_file = None
+            
+            if self._biopsy_wav_file is not None:
+                self._biopsy_wav_file.close()
+                self._biopsy_wav_file = None
+
+            speaker_id = None
+            display_name = None
+            confidence = 0.0
+            inject_enabled = True
+            is_blocked = False
+            
+            try:
+                vb_pipeline_start = time.time()
+                _LOGGER.info(f"[TIMING] STEP 1: Voice biometrics analysis FIRST... (t={vb_pipeline_start:.3f})")
+                
+                shared_audio_filename = f"stt_{int(time.time() * 1000)}.wav"
+                shared_audio_path = os.path.join(SHARED_AUDIO_DIR, shared_audio_filename)
+                
+                shutil.copy2(self._wav_path, shared_audio_path)
+                host_audio_path = f"/home/user/voicebm/stt_requests/{shared_audio_filename}"
+                
+                mqtt_request_start = time.time()
+                _LOGGER.info(f"[TIMING] Requesting VoiceBM analysis via MQTT... (t={mqtt_request_start:.3f})")
+                
+                # Uses the same UUID as the biopsy request to catch early resolves
+                speaker_id, display_name, confidence, inject_enabled, is_blocked = self.request_voice_analysis(
+                    host_audio_path,
+                    request_id=self._current_request_id
+                )
+                
+                mqtt_response_end = time.time()
+                mqtt_roundtrip_ms = (mqtt_response_end - mqtt_request_start) * 1000
+                _LOGGER.info(f"[TIMING] VoiceBM MQTT round-trip completed in {mqtt_roundtrip_ms:.2f}ms")
+                
+                final_speaker_id = speaker_id or "user"
+                final_display_name = display_name or "user"
+                
+                _LOGGER.info(f"[IDENTIFIED] {final_display_name} (speaker_id={final_speaker_id}, confidence={confidence:.4f}, blocked={is_blocked})")
+                
+                self.publish_voice_on(final_speaker_id)
+                self.publish_active_speaker(final_display_name, final_speaker_id)
+                
+                vb_pipeline_end = time.time()
+                vb_total_time_ms = (vb_pipeline_end - vb_pipeline_start) * 1000
+                _LOGGER.info(f"[TIMING] ✅ Voice biometrics pipeline COMPLETE in {vb_total_time_ms:.2f}ms")
+                
+                stt_start = time.time()
+                _LOGGER.info(f"[TIMING] Proceeding with STT... (t={stt_start:.3f})")
+                
+                waveform, sample_rate = sf.read(self._wav_path, dtype="float32")
+                if len(waveform.shape) > 1:
+                    waveform = np.mean(waveform, axis=1)
+
+                lang = self.request_language or "en"
+                model = None
+
+                if lang == "en" and "en" in self.models:
+                    model = self.models["en"]
+                elif "multi" in self.models:
+                    model = self.models["multi"]
+                elif "en" in self.models:
+                    model = self.models["en"]
+
+                if model is None:
+                    await self.write_event(Transcript(text="ERROR: No model").event())
+                    return False
+
+                async with self.model_lock:
+                    try:
+                        text = model.recognize(waveform, language=lang, sample_rate=sample_rate)
+                        stt_end = time.time()
+                        stt_duration_ms = (stt_end - stt_start) * 1000
+                        _LOGGER.info(f"[TIMING] STT transcription completed in {stt_duration_ms:.2f}ms")
+                        _LOGGER.info(f"TRANSCRIPTION: '{text}'")
+
+                        # 1. ALWAYS construct the identity-prepended string for the debug/audit feed
+                        debug_text = f"{final_display_name}: {text}"
+                        
+                        # 2. Handle the action string based on the injection toggle
+                        if inject_enabled:
+                            modified_text = debug_text
+                            _LOGGER.info(f"[INJECTED] '{modified_text}'")
+                        else:
+                            modified_text = text
+                            _LOGGER.info(f"[CLEAN] '{modified_text}' (injection disabled)")
+
+                        try:
+                            # 3. DEBUG payload ALWAYS gets the hardcoded debug_text
+                            msg = {
+                                "state": "user_transcript_ready",
+                                "full": debug_text.strip() if debug_text else "",
+                                "timestamp": __import__('datetime').datetime.now().isoformat()
+                            }
+
+                            _LOGGER.info(f"MQTT PUBLISH DEBUG: topic=voicebm/transcript/debug, payload={json.dumps(msg)}")
+                            
+                            tx = _get_mqtt()
+                            tx.publish("voicebm/transcript/debug", json.dumps(msg), qos=1, retain=True)
+
+                            # 2. Whatever text is going down the request line, copy it and send to preferred
+                            text_for_request_line = "" if is_blocked else modified_text
+
+                            # Bridge suppression (per-utterance): when the transcript_preferred
+                            # switch is OFF and this utterance was marked bridge-origin (via the
+                            # Transcribe.name marker, read before any audio), the preferred
+                            # transcript is held back for THIS utterance only. Native traffic
+                            # never sets the flag, so it is unaffected. The Wyoming return path
+                            # below still answers the requester.
+                            suppress_bridge_preferred = self._is_bridge and not _PREFERRED_STATE["enabled"]
+
+                            if suppress_bridge_preferred:
+                                preferred_text = ""
+                                _LOGGER.info("[GATE] Bridge active + Transcript Preferred OFF — preferred null state for this utterance")
+                            else:
+                                preferred_text = text_for_request_line.strip() if text_for_request_line else ""
+
+                            # State must reflect reality so the sensor is deterministic:
+                            #   real transcript -> state "user_transcript_ready", full = text
+                            #   no transcript   -> state "..." (ellipsis null), full = ""
+                            # Ellipsis is the established null (automations match '' and '...',
+                            # and their cleanup stages republish '...'). No timestamp — identical
+                            # republishes are byte-identical no-ops, so no phantom triggers.
+                            if preferred_text:
+                                preferred_msg = {"state": "user_transcript_ready", "full": preferred_text}
+                            else:
+                                preferred_msg = {"state": "...", "full": ""}
+
+                            _LOGGER.info(f"MQTT PUBLISH PREFERRED: topic=voicebm/transcript/preferred, payload={json.dumps(preferred_msg)}")
+                            tx.publish("voicebm/transcript/preferred", json.dumps(preferred_msg), qos=1, retain=True)
+
+                            _LOGGER.info(f"MQTT COMPLETE: {modified_text.strip() if modified_text else ''}")
+                        except Exception as e:
+                            _LOGGER.error(f"MQTT FAILED: {e}", exc_info=True)
+
+                    except Exception as e:
+                        _LOGGER.error(f"RECOGNITION FAILED: {e}")
+                        await self.write_event(Transcript(text="ERROR: Recognition failed").event())
+                        return False
+                
+                total_end = time.time()
+                total_time_ms = (total_end - vb_pipeline_start) * 1000
+                _LOGGER.info(f"[TIMING] 🏁 END-TO-END COMPLETE in {total_time_ms:.2f}ms (VoiceBM + STT + MQTT)")
+
+                try:
+                    os.unlink(shared_audio_path)
+                except:
+                    pass
+
+                # Return transcript - sending only what we put in preferred (blank if blocked)
+                await self.write_event(Transcript(text=text_for_request_line).event())
+                self.request_language = None
+                return False
+
+            except Exception as e:
+                _LOGGER.error(f"Voice biometrics error: {e}", exc_info=True)
+                
+                waveform, sample_rate = sf.read(self._wav_path, dtype="float32")
+                if len(waveform.shape) > 1:
+                    waveform = np.mean(waveform, axis=1)
+
+                lang = self.request_language or "en"
+                model = self.models.get("en") or self.models.get("multi")
+                
+                if model:
+                    async with self.model_lock:
+                        text = model.recognize(waveform, language=lang, sample_rate=sample_rate)
+                        if self.inject_identity_enabled:
+                            await self.write_event(Transcript(text=f"user: {text}").event())
+                        else:
+                            await self.write_event(Transcript(text=text).event())
+                else:
+                    await self.write_event(Transcript(text="").event())
+                
+                self.request_language = None
+                return False
+
+        if Transcribe.is_type(event.type):
+            transcribe = Transcribe.from_event(event)
+            self.request_language = transcribe.language
+            # Bridge marks its requests via the Transcribe name field. This event
+            # arrives before any audio, so the flag is set before the gate runs.
+            if getattr(transcribe, "name", None) and "bridge" in str(transcribe.name).lower():
+                self._is_bridge = True
+                _LOGGER.info("[BRIDGE] Utterance marked bridge-origin via Transcribe.name")
+            return True
+
+        if Describe.is_type(event.type):
+            await self.write_event(self.wyoming_info_event)
+            return True
+
+        return True
+
+    def _send_biopsy(self):
+        """Close biopsy WAV and send MQTT request WHILE user is still speaking."""
+        if self._biopsy_sent or self._biopsy_wav_file is None:
+            return
+        
+        try:
+            self._biopsy_wav_file.close()
+            self._biopsy_wav_file = None
+            
+            host_biopsy_path = self._biopsy_wav_path.replace("/opt/voicebm", "/home/user/voicebm")
+            
+            # Send biopsy request via standard connection to correct path
+            biopsy_request = {
+                "request_id": self._current_request_id,
+                "audio_path": host_biopsy_path,
+                "timestamp": time.time()
+            }
+            
+            _get_mqtt().publish(VB_REQUEST_TOPIC, json.dumps(biopsy_request), qos=1)
+            
+            self._biopsy_sent = True
+            _LOGGER.info(f"[STREAMING] ⚡ Biopsy sent at {BIOPSY_SECONDS}s (user still speaking)")
+            
+        except Exception as e:
+            _LOGGER.error(f"[STREAMING] Biopsy send failed: {e}")
+            self._biopsy_sent = True
